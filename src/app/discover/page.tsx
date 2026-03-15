@@ -32,42 +32,72 @@ export default function EmployeeDirectory() {
 
   const handleFollow = async (empId: string) => {
     const user = auth.currentUser;
-    if (!user) return;
-    // Add to following
-    const followingRef = doc(db, "following", user.uid);
-    const followingDoc = await getDoc(followingRef);
-    let followingList = followingDoc.exists() ? followingDoc.data().list || [] : [];
-    if (!followingList.includes(empId)) {
-      followingList.push(empId);
-      await setDoc(followingRef, { list: followingList });
-      setFollowing(followingList);
+    if (!user) {
+      console.error("No authenticated user");
+      return;
     }
-    // Add to followers
-    const followersRef = doc(db, "followers", empId);
-    const followersDoc = await getDoc(followersRef);
-    let followersList = followersDoc.exists() ? followersDoc.data().list || [] : [];
-    if (!followersList.includes(user.uid)) {
-      followersList.push(user.uid);
-      await setDoc(followersRef, { list: followersList });
+    
+    try {
+      console.log("Following user:", empId);
+      
+      // Add to following
+      const followingRef = doc(db, "following", user.uid);
+      const followingDoc = await getDoc(followingRef);
+      let followingList = followingDoc.exists() ? followingDoc.data().list || [] : [];
+      
+      if (!followingList.includes(empId)) {
+        followingList.push(empId);
+        await setDoc(followingRef, { list: followingList });
+        setFollowing(followingList);
+        console.log("Added to following:", followingList);
+      }
+      
+      // Add to followers
+      const followersRef = doc(db, "followers", empId);
+      const followersDoc = await getDoc(followersRef);
+      let followersList = followersDoc.exists() ? followersDoc.data().list || [] : [];
+      
+      if (!followersList.includes(user.uid)) {
+        followersList.push(user.uid);
+        await setDoc(followersRef, { list: followersList });
+        console.log("Added to followers:", followersList);
+      }
+    } catch (error) {
+      console.error("Error following user:", error);
+      alert("Failed to follow user. Please try again.");
     }
   };
 
   const handleUnfollow = async (empId: string) => {
     const user = auth.currentUser;
-    if (!user) return;
-    // Remove from following
-    const followingRef = doc(db, "following", user.uid);
-    const followingDoc = await getDoc(followingRef);
-    let followingList = followingDoc.exists() ? followingDoc.data().list || [] : [];
-    followingList = followingList.filter((id: string) => id !== empId);
-    await setDoc(followingRef, { list: followingList });
-    setFollowing(followingList);
-    // Remove from followers
-    const followersRef = doc(db, "followers", empId);
-    const followersDoc = await getDoc(followersRef);
-    let followersList = followersDoc.exists() ? followersDoc.data().list || [] : [];
-    followersList = followersList.filter((id: string) => id !== user.uid);
-    await setDoc(followersRef, { list: followersList });
+    if (!user) {
+      console.error("No authenticated user");
+      return;
+    }
+    
+    try {
+      console.log("Unfollowing user:", empId);
+      
+      // Remove from following
+      const followingRef = doc(db, "following", user.uid);
+      const followingDoc = await getDoc(followingRef);
+      let followingList = followingDoc.exists() ? followingDoc.data().list || [] : [];
+      followingList = followingList.filter((id: string) => id !== empId);
+      await setDoc(followingRef, { list: followingList });
+      setFollowing(followingList);
+      console.log("Removed from following:", followingList);
+      
+      // Remove from followers
+      const followersRef = doc(db, "followers", empId);
+      const followersDoc = await getDoc(followersRef);
+      let followersList = followersDoc.exists() ? followersDoc.data().list || [] : [];
+      followersList = followersList.filter((id: string) => id !== user.uid);
+      await setDoc(followersRef, { list: followersList });
+      console.log("Removed from followers:", followersList);
+    } catch (error) {
+      console.error("Error unfollowing user:", error);
+      alert("Failed to unfollow user. Please try again.");
+    }
   };
 
   const handleChat = async (empId: string) => {

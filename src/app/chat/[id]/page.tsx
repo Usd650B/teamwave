@@ -55,12 +55,32 @@ export default function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (showEmoji) {
+        const emojiPicker = document.querySelector('.emoji-picker-container');
+        const emojiButton = document.querySelector('.emoji-button');
+        
+        if (emojiPicker && !emojiPicker.contains(event.target as Node) && 
+            emojiButton && !emojiButton.contains(event.target as Node)) {
+          setShowEmoji(false);
+        }
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showEmoji]);
+
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() && !file) return;
 
     const user = auth.currentUser;
-    if (!user || !chatId) return;
+    if (!user || !chatId) {
+      console.error("No user or chatId", { user, chatId });
+      return;
+    }
 
     try {
       let fileUrl = "";
@@ -69,15 +89,25 @@ export default function ChatPage() {
       let fileSize = 0;
 
       if (file) {
+        console.log("Uploading file:", file.name, file.size, file.type);
         const storageRef = ref(storage, `uploads/${chatId}/${Date.now()}_${file.name}`);
-        await uploadBytes(storageRef, file);
-        fileUrl = await getDownloadURL(storageRef);
-        fileName = file.name;
-        fileType = file.type;
-        fileSize = file.size;
+        
+        try {
+          await uploadBytes(storageRef, file);
+          console.log("File uploaded successfully");
+          fileUrl = await getDownloadURL(storageRef);
+          console.log("File URL obtained:", fileUrl);
+          fileName = file.name;
+          fileType = file.type;
+          fileSize = file.size;
+        } catch (uploadError) {
+          console.error("File upload error:", uploadError);
+          alert("Failed to upload file. Please try again.");
+          return;
+        }
       }
 
-      await addDoc(collection(db, "conversations", chatId as string, "messages"), {
+      const messageData = {
         senderId: user.uid,
         message: input,
         fileUrl,
@@ -86,13 +116,20 @@ export default function ChatPage() {
         fileSize,
         createdAt: serverTimestamp(),
         seen: false
-      });
+      };
+
+      console.log("Sending message:", messageData);
+      
+      await addDoc(collection(db, "conversations", chatId as string, "messages"), messageData);
 
       setInput("");
       setFile(null);
       setShowEmoji(false);
+      
+      console.log("Message sent successfully");
     } catch (error) {
       console.error("Error sending message:", error);
+      alert("Failed to send message. Please try again.");
     }
   };
 
@@ -230,7 +267,7 @@ export default function ChatPage() {
         <div className="relative">
           <button 
             type="button" 
-            className="mr-2 text-2xl hover:opacity-70 transition-opacity" 
+            className="mr-2 text-2xl hover:opacity-70 transition-opacity emoji-button" 
             onClick={() => setShowEmoji(!showEmoji)}
             title="Add emoji"
           >
@@ -239,7 +276,7 @@ export default function ChatPage() {
           
           {/* Emoji Picker */}
           {showEmoji && (
-            <div className="absolute bottom-12 left-0 bg-white border border-gray-300 rounded-lg shadow-lg p-2 z-10">
+            <div className="absolute bottom-12 left-0 bg-white border border-gray-300 rounded-lg shadow-lg p-2 z-10 emoji-picker-container">
               <div className="grid grid-cols-8 gap-1">
                 {['😀', '😃', '😄', '😁', '😅', '😂', '🤣', '😊', '😇', '🙂', '🙃', '😉', '😌', '😍', '🥰', '😘', 
                  '😗', '😙', '😚', '😋', '😛', '😜', '🤪', '😝', '🤗', '🤭', '🤫', '🤔', '🤐', '🤨', '😐', '😑',
@@ -256,8 +293,10 @@ export default function ChatPage() {
                     type="button"
                     className="text-lg hover:bg-gray-100 rounded p-1 transition-colors"
                     onClick={() => {
-                      setInput(input + emoji);
+                      const newInput = input + emoji;
+                      setInput(newInput);
                       setShowEmoji(false);
+                      console.log("Added emoji:", emoji, "New input:", newInput);
                     }}
                   >
                     {emoji}
