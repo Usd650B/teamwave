@@ -19,6 +19,72 @@
   }
 }
 
+/* Dark mode styles */
+.dark {
+  --background: #1a1a1a;
+  --foreground: #ededed;
+}
+
+.dark body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* Dark mode component styles */
+.dark .bg-white {
+  background-color: #2d2d2d !important;
+  color: #ffffff !important;
+}
+
+.dark .bg-gray-50 {
+  background-color: #374151 !important;
+  color: #ffffff !important;
+}
+
+.dark .bg-blue-500 {
+  background-color: #1e40af !important;
+}
+
+.dark .bg-gray-200 {
+  background-color: #4b5563 !important;
+}
+
+.dark .border-gray-200 {
+  border-color: #4b5563 !important;
+}
+
+.dark .text-black {
+  color: #ffffff !important;
+}
+
+.dark .text-white {
+  color: #ffffff !important;
+}
+
+.dark .text-gray-400 {
+  color: #9ca3af !important;
+}
+
+.dark .text-gray-500 {
+  color: #6b7280 !important;
+}
+
+.dark .text-gray-700 {
+  color: #d1d5db !important;
+}
+
+.dark .text-blue-600 {
+  color: #60a5fa !important;
+}
+
+.dark .text-gray-600 {
+  color: #9ca3af !important;
+}
+
+.dark .hover\:bg-gray-100:hover {
+  background-color: #374151 !important;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
