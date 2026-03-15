@@ -227,9 +227,47 @@ export default function ChatPage() {
       </main>
 
       <form className="flex items-center px-4 py-3 bg-white border-t border-[#E5E7EB]" onSubmit={handleSend}>
-        <button type="button" className="mr-2" onClick={() => setShowEmoji(!showEmoji)}>
-          <span role="img" aria-label="emoji">😊</span>
-        </button>
+        <div className="relative">
+          <button 
+            type="button" 
+            className="mr-2 text-2xl hover:opacity-70 transition-opacity" 
+            onClick={() => setShowEmoji(!showEmoji)}
+            title="Add emoji"
+          >
+            😊
+          </button>
+          
+          {/* Emoji Picker */}
+          {showEmoji && (
+            <div className="absolute bottom-12 left-0 bg-white border border-gray-300 rounded-lg shadow-lg p-2 z-10">
+              <div className="grid grid-cols-8 gap-1">
+                {['😀', '😃', '😄', '😁', '😅', '😂', '🤣', '😊', '😇', '🙂', '🙃', '😉', '😌', '😍', '🥰', '😘', 
+                 '😗', '😙', '😚', '😋', '😛', '😜', '🤪', '😝', '🤗', '🤭', '🤫', '🤔', '🤐', '🤨', '😐', '😑',
+                 '😶', '😏', '😒', '🙄', '😬', '🤥', '😔', '😪', '🤤', '😴', '😷', '🤒', '🤕', '🤢', '🤮', '🤧',
+                 '🥵', '🥶', '🥴', '😵', '🤯', '🤠', '🥳', '😎', '🤓', '🧐', '😕', '😟', '🙁', '☹️', '😮', '😯',
+                 '😲', '😳', '🥺', '😦', '😧', '😨', '😰', '😥', '😢', '😭', '😱', '😖', '😣', '😞', '😓', '😩', '😫',
+                 '🥱', '😤', '😡', '😠', '🤬', '😈', '👿', '💀', '☠️', '💩', '🤡', '👹', '👺', '👻', '👽', '👾',
+                 '🤖', '❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '💔', '❣️', '💕', '💞', '💓', '💗', '💖', '💘',
+                 '💝', '👍', '👎', '👌', '✌️', '🤞', '🤟', '🤘', '🤙', '👈', '👉', '👆', '👇', '☝️', '✋', '🤚',
+                 '🖐️', '🖖', '👋', '🤙', '💪', '🙏', '✍️', '🌟', '⭐', '💫', '✨', '⚡', '🔥', '💥', '💢', '💨',
+                 '🦋', '🌈', '☀️', '🌙', '⭐', '🌟'].map((emoji, index) => (
+                  <button
+                    key={index}
+                    type="button"
+                    className="text-lg hover:bg-gray-100 rounded p-1 transition-colors"
+                    onClick={() => {
+                      setInput(input + emoji);
+                      setShowEmoji(false);
+                    }}
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+        
         <input
           type="text"
           className="flex-1 p-2 rounded border border-[#E5E7EB]"
@@ -243,7 +281,13 @@ export default function ChatPage() {
           onChange={(e) => setFile(e.target.files?.[0] || null)}
           accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.rar"
         />
-        <button type="submit" className="ml-2 px-4 py-2 rounded bg-[#2563EB] text-white font-medium">Send</button>
+        <button 
+          type="submit" 
+          className="ml-2 px-4 py-2 rounded bg-[#2563EB] text-white font-medium hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled={!input.trim() && !file}
+        >
+          Send
+        </button>
       </form>
     </div>
   );

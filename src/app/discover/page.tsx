@@ -108,9 +108,7 @@ export default function EmployeeDirectory() {
     // Don't show current user
     if (emp.id === auth.currentUser?.uid) return false;
     
-    // Don't show private users unless following
-    if (emp.privacy === "private" && !following.includes(emp.id)) return false;
-    
+    // All users are public now - no privacy filtering
     // Search filter
     return emp.name.toLowerCase().includes(search.toLowerCase()) ||
            (emp.jobTitle || "").toLowerCase().includes(search.toLowerCase());
@@ -136,12 +134,22 @@ export default function EmployeeDirectory() {
           ) : (
             filtered.map(emp => (
               <div key={emp.id} className="flex items-center gap-4 py-2 border-b border-[#E5E7EB] last:border-b-0">
-                <div className="w-10 h-10 rounded-full bg-[#E5E7EB]" />
+                <div className="w-10 h-10 rounded-full bg-[#E5E7EB] flex items-center justify-center">
+                  {emp.profilePhoto ? (
+                    <img 
+                      src={emp.profilePhoto} 
+                      alt={emp.name} 
+                      className="w-10 h-10 rounded-full object-cover"
+                    />
+                  ) : (
+                    <span className="text-gray-400 text-lg">👤</span>
+                  )}
+                </div>
                 <div className="flex-1">
                   <div className="font-semibold text-black">{emp.name}</div>
                   <div className="text-xs text-gray-500">{emp.jobTitle || ""}</div>
                   <div className="text-xs text-gray-400">
-                    {emp.privacy === "public" ? "🌍 Public" : "🔒 Private"}
+                    🌍 Public
                   </div>
                 </div>
                 <div className="flex gap-2">

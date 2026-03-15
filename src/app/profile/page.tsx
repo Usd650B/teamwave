@@ -10,7 +10,6 @@ export default function ProfilePage() {
   const [isEditing, setIsEditing] = useState(false);
   const [name, setName] = useState("");
   const [jobTitle, setJobTitle] = useState("");
-  const [privacy, setPrivacy] = useState<"public" | "private">("public");
   const [profilePhoto, setProfilePhoto] = useState("");
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
@@ -32,7 +31,6 @@ export default function ProfilePage() {
         const userData = userDoc.data();
         setName(userData.name || user.displayName || "");
         setJobTitle(userData.jobTitle || "");
-        setPrivacy(userData.privacy || "public");
         setProfilePhoto(userData.profilePhoto || user.photoURL || "");
       }
     };
@@ -62,9 +60,9 @@ export default function ProfilePage() {
         id: user.uid,
         name,
         jobTitle,
-        privacy,
         email: user.email,
         profilePhoto: photoUrl,
+        privacy: "public", // Always public now
         updatedAt: new Date()
       }, { merge: true }); // merge: true allows updating without overwriting existing fields
 
@@ -151,32 +149,6 @@ export default function ProfilePage() {
               />
             </div>
             
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Privacy</label>
-              <div className="space-y-2">
-                <label className="flex items-center">
-                  <input
-                    type="radio"
-                    value="public"
-                    checked={privacy === "public"}
-                    onChange={(e) => setPrivacy(e.target.value as "public" | "private")}
-                    className="mr-2"
-                  />
-                  <span className="text-sm">Public - Discoverable by team</span>
-                </label>
-                <label className="flex items-center">
-                  <input
-                    type="radio"
-                    value="private"
-                    checked={privacy === "private"}
-                    onChange={(e) => setPrivacy(e.target.value as "public" | "private")}
-                    className="mr-2"
-                  />
-                  <span className="text-sm">Private - Only chat with people you follow</span>
-                </label>
-              </div>
-            </div>
-            
             <button
               onClick={handleSave}
               disabled={loading}
@@ -189,15 +161,6 @@ export default function ProfilePage() {
           <>
             <h2 className="text-lg font-semibold text-[#2563EB] mb-2">{name}</h2>
             <p className="text-gray-700 mb-2">{jobTitle}</p>
-            <div className="mb-4">
-              <span className={`inline-block px-3 py-1 rounded-full text-sm font-medium ${
-                privacy === "public" 
-                  ? "bg-green-100 text-green-800" 
-                  : "bg-gray-100 text-gray-800"
-              }`}>
-                {privacy === "public" ? "🌍 Public" : "🔒 Private"}
-              </span>
-            </div>
             <div className="flex gap-4 mb-4">
               <div className="text-center">
                 <div className="font-bold text-[#2563EB]">0</div>
@@ -207,6 +170,11 @@ export default function ProfilePage() {
                 <div className="font-bold text-[#2563EB]">0</div>
                 <div className="text-xs text-gray-500">Following</div>
               </div>
+            </div>
+            <div className="mb-4">
+              <span className="inline-block px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-800">
+                🌍 Public
+              </span>
             </div>
             <button 
               onClick={handleLogout}
