@@ -33,70 +33,120 @@ export default function EmployeeDirectory() {
   const handleFollow = async (empId: string) => {
     const user = auth.currentUser;
     if (!user) {
-      console.error("No authenticated user");
+      console.error("=== NO AUTHENTICATED USER ===");
+      alert("Please log in to follow users.");
       return;
     }
     
+    console.log("=== FOLLOWING USER ===");
+    console.log("Current user:", user.uid);
+    console.log("Following user:", empId);
+    
     try {
-      console.log("Following user:", empId);
-      
       // Add to following
+      console.log("Adding to following collection...");
       const followingRef = doc(db, "following", user.uid);
       const followingDoc = await getDoc(followingRef);
       let followingList = followingDoc.exists() ? followingDoc.data().list || [] : [];
+      
+      console.log("Current following list:", followingList);
       
       if (!followingList.includes(empId)) {
         followingList.push(empId);
         await setDoc(followingRef, { list: followingList });
         setFollowing(followingList);
-        console.log("Added to following:", followingList);
+        console.log("✅ Added to following:", followingList);
+      } else {
+        console.log("User already in following list");
       }
       
       // Add to followers
+      console.log("Adding to followers collection...");
       const followersRef = doc(db, "followers", empId);
       const followersDoc = await getDoc(followersRef);
       let followersList = followersDoc.exists() ? followersDoc.data().list || [] : [];
       
+      console.log("Current followers list:", followersList);
+      
       if (!followersList.includes(user.uid)) {
         followersList.push(user.uid);
         await setDoc(followersRef, { list: followersList });
-        console.log("Added to followers:", followersList);
+        console.log("✅ Added to followers:", followersList);
+      } else {
+        console.log("User already in followers list");
       }
+      
+      console.log("=== FOLLOW SUCCESSFUL ===");
+      alert("Successfully followed user!");
     } catch (error) {
-      console.error("Error following user:", error);
-      alert("Failed to follow user. Please try again.");
+      console.error("=== ERROR FOLLOWING USER ===");
+      console.error("Error details:", error);
+      
+      const firebaseError = error as any;
+      console.error("Error code:", firebaseError.code);
+      console.error("Error message:", firebaseError.message);
+      
+      if (firebaseError.code === 'permission-denied') {
+        alert("Permission denied. Please check Firebase security rules.");
+      } else {
+        alert("Failed to follow user: " + (firebaseError.message || "Unknown error"));
+      }
     }
   };
 
   const handleUnfollow = async (empId: string) => {
     const user = auth.currentUser;
     if (!user) {
-      console.error("No authenticated user");
+      console.error("=== NO AUTHENTICATED USER ===");
+      alert("Please log in to unfollow users.");
       return;
     }
     
+    console.log("=== UNFOLLOWING USER ===");
+    console.log("Current user:", user.uid);
+    console.log("Unfollowing user:", empId);
+    
     try {
-      console.log("Unfollowing user:", empId);
-      
       // Remove from following
+      console.log("Removing from following collection...");
       const followingRef = doc(db, "following", user.uid);
       const followingDoc = await getDoc(followingRef);
       let followingList = followingDoc.exists() ? followingDoc.data().list || [] : [];
+      
+      console.log("Current following list:", followingList);
+      
       followingList = followingList.filter((id: string) => id !== empId);
       await setDoc(followingRef, { list: followingList });
       setFollowing(followingList);
-      console.log("Removed from following:", followingList);
+      console.log("✅ Removed from following:", followingList);
       
       // Remove from followers
+      console.log("Removing from followers collection...");
       const followersRef = doc(db, "followers", empId);
       const followersDoc = await getDoc(followersRef);
       let followersList = followersDoc.exists() ? followersDoc.data().list || [] : [];
+      
+      console.log("Current followers list:", followersList);
+      
       followersList = followersList.filter((id: string) => id !== user.uid);
       await setDoc(followersRef, { list: followersList });
-      console.log("Removed from followers:", followersList);
+      console.log("✅ Removed from followers:", followersList);
+      
+      console.log("=== UNFOLLOW SUCCESSFUL ===");
+      alert("Successfully unfollowed user!");
     } catch (error) {
-      console.error("Error unfollowing user:", error);
-      alert("Failed to unfollow user. Please try again.");
+      console.error("=== ERROR UNFOLLOWING USER ===");
+      console.error("Error details:", error);
+      
+      const firebaseError = error as any;
+      console.error("Error code:", firebaseError.code);
+      console.error("Error message:", firebaseError.message);
+      
+      if (firebaseError.code === 'permission-denied') {
+        alert("Permission denied. Please check Firebase security rules.");
+      } else {
+        alert("Failed to unfollow user: " + (firebaseError.message || "Unknown error"));
+      }
     }
   };
 

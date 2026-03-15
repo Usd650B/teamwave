@@ -79,8 +79,15 @@ export default function ChatPage() {
     const user = auth.currentUser;
     if (!user || !chatId) {
       console.error("No user or chatId", { user, chatId });
+      alert("Please log in and try again.");
       return;
     }
+
+    console.log("=== SENDING MESSAGE ===");
+    console.log("User:", user.uid);
+    console.log("Chat ID:", chatId);
+    console.log("Message:", input);
+    console.log("File:", file?.name);
 
     try {
       let fileUrl = "";
@@ -118,18 +125,32 @@ export default function ChatPage() {
         seen: false
       };
 
-      console.log("Sending message:", messageData);
+      console.log("Message data:", messageData);
+      console.log("Collection path:", `conversations/${chatId}/messages`);
       
-      await addDoc(collection(db, "conversations", chatId as string, "messages"), messageData);
+      const docRef = await addDoc(collection(db, "conversations", chatId as string, "messages"), messageData);
+      console.log("Message sent successfully with ID:", docRef.id);
 
       setInput("");
       setFile(null);
       setShowEmoji(false);
       
-      console.log("Message sent successfully");
+      console.log("=== MESSAGE SENT SUCCESSFULLY ===");
     } catch (error) {
-      console.error("Error sending message:", error);
-      alert("Failed to send message. Please try again.");
+      console.error("=== ERROR SENDING MESSAGE ===");
+      console.error("Error details:", error);
+      
+      const firebaseError = error as any;
+      console.error("Error code:", firebaseError.code);
+      console.error("Error message:", firebaseError.message);
+      
+      if (firebaseError.code === 'permission-denied') {
+        alert("Permission denied. Please check Firebase security rules.");
+      } else if (firebaseError.code === 'not-found') {
+        alert("Chat not found. Please try starting a new conversation.");
+      } else {
+        alert("Failed to send message: " + (firebaseError.message || "Unknown error"));
+      }
     }
   };
 
