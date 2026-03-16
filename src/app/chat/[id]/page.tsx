@@ -2,103 +2,136 @@
 
 import React, { useEffect, useState, useRef } from "react";
 import { db, storage } from "@/lib/firebase/firebase";
-import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, doc, setDoc } from "firebase/firestore";
+import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, doc, setDoc, updateDoc, getDoc } from "firebase/firestore";
 import { auth } from "@/lib/firebase/firebase";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useTheme } from "@/contexts/ThemeContext";
+import { onAuthStateChanged } from "firebase/auth";
 
 export default function ChatPage() {
   const { theme, toggleTheme } = useTheme();
   const [messages, setMessages] = useState<any[]>([]);
+  const [chatInfo, setChatInfo] = useState<any>(null);
   const [input, setInput] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [showEmoji, setShowEmoji] = useState(false);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
+  const [typingNames, setTypingNames] = useState<Record<string, string>>({});
   const [isTyping, setIsTyping] = useState(false);
   const [currentUser, setCurrentUser] = useState(auth.currentUser);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const { chatId } = useParams();
+  const params = useParams();
+  const chatId = params.id as string;
+  const router = useRouter();
 
-  // Monitor authentication state
+  // Monitor auth
   useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged((user) => {
-      console.log("Auth state changed:", user);
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
       setCurrentUser(user);
+      if (!user) router.replace("/login");
     });
-    
     return unsubscribe;
-  }, []);
+  }, [router]);
 
+  // Load chat info (name, etc)
   useEffect(() => {
-    if (!chatId) return;
+    if (!chatId || !currentUser) return;
+    const fetchChatInfo = async () => {
+      try {
+        const chatDoc = await getDoc(doc(db, "conversations", chatId));
+        if (chatDoc.exists()) {
+          const data = chatDoc.data();
+          // Check if current user is a participant
+          if (data.participants?.includes(currentUser.uid)) {
+            setChatInfo(data);
+          } else {
+            console.warn("Access denied to this conversation");
+            router.replace("/home");
+          }
+        } else {
+          router.replace("/home");
+        }
+      } catch (err) {
+        console.error("Error fetching chat info:", err);
+      }
+    };
+    fetchChatInfo();
+  }, [chatId, currentUser, router]);
+
+  // Load messages & typing
+  useEffect(() => {
+    // ONLY subscribe if we verified chatInfo exists and the user is a participant
+    if (!chatId || !currentUser || !chatInfo) return;
 
     const messagesQuery = query(
-      collection(db, "conversations", chatId as string, "messages"),
+      collection(db, "conversations", chatId, "messages"),
       orderBy("createdAt", "asc")
     );
 
-    const unsubscribeMessages = onSnapshot(messagesQuery, (snapshot) => {
-      const messagesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setMessages(messagesData);
-    });
-
-    const typingRef = doc(db, "conversations", chatId as string, "typing");
-    const unsubscribeTyping = onSnapshot(typingRef, (doc) => {
-      if (doc.exists()) {
-        const typingData = doc.data();
-        const currentUserId = auth.currentUser?.uid;
-        const users = Object.keys(typingData).filter(userId => 
-          typingData[userId] === true && userId !== currentUserId
-        );
-        setTypingUsers(users);
+    const unsubscribeMessages = onSnapshot(messagesQuery, 
+      (snapshot) => {
+        setMessages(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      },
+      (error) => {
+        if (error.code === 'permission-denied') {
+          console.warn("Permission denied for messages listener");
+        } else {
+          console.error("Messages listener error:", error);
+        }
       }
-    });
+    );
+
+    const typingRef = doc(db, "typing", chatId);
+    const unsubscribeTyping = onSnapshot(typingRef, 
+      async (docSnap) => {
+        if (docSnap.exists()) {
+          const typingData = docSnap.data();
+          const uids = Object.keys(typingData).filter(uid => 
+            typingData[uid] === true && uid !== currentUser.uid
+          );
+          setTypingUsers(uids);
+          
+          for (const uid of uids) {
+            setTypingNames(prev => {
+              if (!prev[uid]) {
+                getDoc(doc(db, "users", uid)).then(uDoc => {
+                  if (uDoc.exists()) {
+                    setTypingNames(latest => ({ ...latest, [uid]: uDoc.data().name || "Someone" }));
+                  }
+                }).catch(() => {});
+              }
+              return prev;
+            });
+          }
+        } else {
+          setTypingUsers([]);
+        }
+      },
+      (error) => {
+        if (error.code !== 'permission-denied') {
+          console.error("Typing listener error:", error);
+        }
+      }
+    );
 
     return () => {
       unsubscribeMessages();
       unsubscribeTyping();
     };
-  }, [chatId]);
+  }, [chatId, currentUser, chatInfo]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (showEmoji) {
-        const emojiPicker = document.querySelector('.emoji-picker-container');
-        const emojiButton = document.querySelector('.emoji-button');
-        
-        if (emojiPicker && !emojiPicker.contains(event.target as Node) && 
-            emojiButton && !emojiButton.contains(event.target as Node)) {
-          setShowEmoji(false);
-        }
-      }
-    };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showEmoji]);
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() && !file) return;
 
     const user = currentUser;
-    if (!user || !chatId) {
-      console.error("No user or chatId", { user, chatId });
-      alert("Please log in and try again.");
-      return;
-    }
-
-    console.log("=== SENDING MESSAGE ===");
-    console.log("User:", user.uid);
-    console.log("Chat ID:", chatId);
-    console.log("Message:", input);
-    console.log("File:", file?.name);
+    if (!user || !chatId) return;
 
     try {
       let fileUrl = "";
@@ -107,27 +140,19 @@ export default function ChatPage() {
       let fileSize = 0;
 
       if (file) {
-        console.log("Uploading file:", file.name, file.size, file.type);
         const storageRef = ref(storage, `uploads/${chatId}/${Date.now()}_${file.name}`);
-        
-        try {
-          await uploadBytes(storageRef, file);
-          console.log("File uploaded successfully");
-          fileUrl = await getDownloadURL(storageRef);
-          console.log("File URL obtained:", fileUrl);
-          fileName = file.name;
-          fileType = file.type;
-          fileSize = file.size;
-        } catch (uploadError) {
-          console.error("File upload error:", uploadError);
-          alert("Failed to upload file. Please try again.");
-          return;
-        }
+        await uploadBytes(storageRef, file);
+        fileUrl = await getDownloadURL(storageRef);
+        fileName = file.name;
+        fileType = file.type;
+        fileSize = file.size;
       }
 
+      const messageContent = input.trim();
       const messageData = {
         senderId: user.uid,
-        message: input,
+        senderName: user.displayName || "Unknown",
+        message: messageContent,
         fileUrl,
         fileName,
         fileType,
@@ -136,32 +161,20 @@ export default function ChatPage() {
         seen: false
       };
 
-      console.log("Message data:", messageData);
-      console.log("Collection path:", `conversations/${chatId}/messages`);
+      await addDoc(collection(db, "conversations", chatId, "messages"), messageData);
       
-      const docRef = await addDoc(collection(db, "conversations", chatId as string, "messages"), messageData);
-      console.log("Message sent successfully with ID:", docRef.id);
+      const convRef = doc(db, "conversations", chatId);
+      await updateDoc(convRef, {
+        lastMessage: messageContent || (fileName ? `📎 ${fileName}` : ""),
+        updatedAt: serverTimestamp()
+      });
 
       setInput("");
       setFile(null);
       setShowEmoji(false);
-      
-      console.log("=== MESSAGE SENT SUCCESSFULLY ===");
     } catch (error) {
-      console.error("=== ERROR SENDING MESSAGE ===");
-      console.error("Error details:", error);
-      
-      const firebaseError = error as any;
-      console.error("Error code:", firebaseError.code);
-      console.error("Error message:", firebaseError.message);
-      
-      if (firebaseError.code === 'permission-denied') {
-        alert("Permission denied. Please check Firebase security rules.");
-      } else if (firebaseError.code === 'not-found') {
-        alert("Chat not found. Please try starting a new conversation.");
-      } else {
-        alert("Failed to send message: " + (firebaseError.message || "Unknown error"));
-      }
+      console.error("Error sending message:", error);
+      alert("Failed to send message.");
     }
   };
 
@@ -169,110 +182,95 @@ export default function ChatPage() {
     const value = e.target.value;
     setInput(value);
     
-    const user = auth.currentUser;
-    if (!user || !chatId) return;
+    if (!currentUser || !chatId) return;
 
-    // Set typing status
-    setIsTyping(true);
-    const typingRef = doc(db, "conversations", chatId as string, "typing");
-    setDoc(typingRef, {
-      [user.uid]: true
-    }, { merge: true });
-
-    // Clear existing timeout
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
+    if (!isTyping) {
+      setIsTyping(true);
+      setDoc(doc(db, "typing", chatId), {
+        [currentUser.uid]: true
+      }, { merge: true });
     }
 
-    // Set new timeout to clear typing status
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     typingTimeoutRef.current = setTimeout(() => {
       setIsTyping(false);
-      setDoc(doc(db, `conversations/${chatId}/typing`), {
-        [user.uid]: false
+      setDoc(doc(db, "typing", chatId), {
+        [currentUser.uid]: false
       }, { merge: true });
-    }, 1000);
+    }, 2000);
   };
 
   const formatFileSize = (bytes: number) => {
     if (bytes === 0) return '0 Bytes';
     const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const sizes = ['B', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   };
 
-  const getFileIcon = (fileType: string) => {
-    if (fileType.startsWith('image/')) return '🖼️';
-    if (fileType.startsWith('video/')) return '🎥';
-    if (fileType.startsWith('audio/')) return '🎵';
-    if (fileType.includes('pdf')) return '📄';
-    if (fileType.includes('word') || fileType.includes('document')) return '📝';
-    if (fileType.includes('excel') || fileType.includes('spreadsheet')) return '📊';
-    if (fileType.includes('powerpoint') || fileType.includes('presentation')) return '📽️';
-    if (fileType.includes('zip') || fileType.includes('rar')) return '📦';
-    return '📎';
+  const getFileIcon = (type: string) => {
+    if (type.startsWith('image/')) return 'image';
+    if (type.startsWith('video/')) return 'videocam';
+    if (type.startsWith('audio/')) return 'audiotrack';
+    return 'insert_drive_file';
   };
 
   return (
-    <div className="flex flex-col min-h-screen bg-[#F5F5F5]">
-      <header className="flex items-center justify-between px-4 py-3 bg-white border-b border-[#E5E7EB]">
-        <div className="flex items-center flex-1 gap-2">
-          <button 
-            onClick={() => window.history.back()} 
-            className="mr-3 text-[#2563EB] hover:underline"
-          >
-            ← Back
+    <div className="flex flex-col h-screen bg-[#F0F2F5]">
+      <header className="flex items-center justify-between px-4 py-3 bg-white border-b border-[#E5E7EB] shadow-sm z-10">
+        <div className="flex items-center gap-3">
+          <button onClick={() => router.back()} className="text-gray-500 hover:text-blue-600 transition-colors">
+            <span className="material-icons">arrow_back</span>
           </button>
-          <img src="/logo.svg" alt="TeamWave" className="w-6 h-6" />
-          <h1 className="text-xl font-bold text-[#2563EB]">Chat</h1>
+          <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold">
+            {chatInfo?.name?.charAt(0).toUpperCase() || "C"}
+          </div>
+          <div>
+            <h1 className="text-sm font-bold text-gray-900 leading-tight truncate max-w-[150px]">
+              {chatInfo?.name || "Loading chat..."}
+            </h1>
+            <div className="text-[10px] text-green-500 font-bold flex items-center gap-1">
+              <span className="w-1.5 h-1.5 bg-green-500 rounded-full"></span>
+              ACTIVE NOW
+            </div>
+          </div>
         </div>
-        <div className="flex gap-2">
-          <button onClick={toggleTheme} className="text-2xl">
-            {theme === "light" ? "🌙" : "☀️"}
-          </button>
-        </div>
+        <button onClick={toggleTheme} className="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center transition-colors">
+          <span className="material-icons text-gray-500">{theme === "light" ? "dark_mode" : "light_mode"}</span>
+        </button>
       </header>
 
-      <main className="flex-1 flex flex-col px-4 py-4 overflow-auto">
+      <main className="flex-1 overflow-y-auto px-4 py-6 space-y-3">
         {messages.map((msg, idx) => {
-          const isOwnMessage = msg.senderId === auth.currentUser?.uid;
+          const isOwn = msg.senderId === currentUser?.uid;
+          const showSender = !isOwn && (!messages[idx-1] || messages[idx-1].senderId !== msg.senderId);
           
           return (
-            <div
-              key={idx}
-              className={`flex ${isOwnMessage ? "justify-end" : "justify-start"} mb-2`}
-            >
-              <div
-                className={`rounded-lg px-4 py-2 text-sm max-w-xs ${isOwnMessage ? "bg-[#2563EB] text-white" : "bg-[#F5F5F5] text-black border border-[#E5E7EB]"}`}
-              >
-                {msg.fileUrl && msg.fileType.startsWith("image") ? (
+            <div key={msg.id || idx} className={`flex flex-col ${isOwn ? "items-end" : "items-start"}`}>
+              {showSender && <span className="text-[10px] font-bold text-gray-400 ml-2 mb-1 uppercase tracking-wider">{msg.senderName}</span>}
+              
+              <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 shadow-sm text-sm ${
+                isOwn ? "bg-[#2563EB] text-white rounded-tr-none" : "bg-white text-gray-800 rounded-tl-none border border-gray-100"
+              }`}>
+                {msg.fileUrl && (
                   <div className="mb-2">
-                    <img 
-                      src={msg.fileUrl} 
-                      alt="sent" 
-                      className="max-w-xs mb-2 rounded"
-                    />
-                    <div className="text-xs text-gray-600">
-                      🖼️ {msg.fileName || "image"} • {msg.fileSize ? formatFileSize(msg.fileSize) : "Unknown size"}
-                    </div>
-                  </div>
-                ) : msg.fileUrl ? (
-                  <div className="mb-2 p-3 bg-gray-100 rounded">
-                    <div className="flex items-center gap-2">
-                      <span className="text-2xl">{getFileIcon(msg.fileType)}</span>
-                      <div className="flex-1">
-                        <div className="font-medium text-sm">{msg.fileName || "file"}</div>
-                        <div className="text-xs text-gray-600">
-                          {msg.fileSize ? formatFileSize(msg.fileSize) : "Unknown size"}
+                    {msg.fileType.startsWith("image") ? (
+                      <img src={msg.fileUrl} alt="attachment" className="rounded-lg max-h-60 object-cover border border-black/5 cursor-pointer hover:opacity-95 transition-opacity" onClick={() => window.open(msg.fileUrl, '_blank')} />
+                    ) : (
+                      <a href={msg.fileUrl} target="_blank" rel="noreferrer" className="flex items-center gap-3 p-2 bg-black/5 rounded-lg hover:bg-black/10 transition-colors">
+                        <span className="material-icons text-blue-500">{getFileIcon(msg.fileType)}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs font-bold truncate">{msg.fileName}</div>
+                          <div className="text-[10px] opacity-60 uppercase">{formatFileSize(msg.fileSize)}</div>
                         </div>
-                      </div>
-                    </div>
+                        <span className="material-icons text-gray-400 text-sm">download</span>
+                      </a>
+                    )}
                   </div>
-                ) : null}
-                
-                <div className="mb-1">{msg.message}</div>
-                <div className="text-xs opacity-70">
-                  {msg.createdAt?.toDate?.() ? new Date(msg.createdAt.toDate()).toLocaleTimeString() : ""}
+                )}
+                <div className="leading-relaxed whitespace-pre-wrap break-words">{msg.message}</div>
+                <div className={`text-[9px] mt-1 text-right ${isOwn ? "text-blue-100" : "text-gray-400"} font-bold`}>
+                  {msg.createdAt?.toDate?.() ? new Date(msg.createdAt.toDate()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "..."}
                 </div>
               </div>
             </div>
@@ -280,86 +278,70 @@ export default function ChatPage() {
         })}
         
         {typingUsers.length > 0 && (
-          <div className="flex items-center gap-2 mb-2">
-            <div className="flex gap-1">
-              <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-              <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-              <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+          <div className="flex items-center gap-2 px-2 py-1">
+            <div className="flex space-x-1">
+              <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></div>
+              <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:0.2s]"></div>
+              <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:0.4s]"></div>
             </div>
-            <span className="text-xs text-gray-500 ml-2">
-              {typingUsers.length === 1 ? "Someone is typing..." : "People are typing..."}
+            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-tight italic">
+              {typingUsers.length === 1 ? `${typingNames[typingUsers[0]] || "Someone"} is typing...` : "People are typing..."}
             </span>
           </div>
         )}
-        
         <div ref={messagesEndRef} />
       </main>
 
-      <form className="flex items-center px-4 py-3 bg-white border-t border-[#E5E7EB]" onSubmit={handleSend}>
-        <div className="relative">
-          <button 
-            type="button" 
-            className="mr-2 text-2xl hover:opacity-70 transition-opacity emoji-button" 
-            onClick={() => setShowEmoji(!showEmoji)}
-            title="Add emoji"
-          >
-            😊
-          </button>
+      <footer className="bg-white border-t border-[#E5E7EB] px-4 py-3 pb-safe-bottom">
+        <form className="flex items-end gap-2" onSubmit={handleSend}>
+          <div className="flex items-center gap-1 mb-1">
+            <label className="cursor-pointer p-1.5 rounded-full hover:bg-gray-100 transition-colors text-gray-500">
+              <span className="material-icons shadow-sm">attach_file</span>
+              <input type="file" className="hidden" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+            </label>
+            <button type="button" onClick={() => setShowEmoji(!showEmoji)} className="p-1.5 rounded-full hover:bg-gray-100 transition-colors text-gray-500">
+              <span className="material-icons text-xl">sentiment_satisfied_alt</span>
+            </button>
+          </div>
           
-          {/* Emoji Picker */}
-          {showEmoji && (
-            <div className="absolute bottom-12 left-0 bg-white border border-gray-300 rounded-lg shadow-lg p-2 z-10 emoji-picker-container">
-              <div className="grid grid-cols-8 gap-1">
-                {['😀', '😃', '😄', '😁', '😅', '😂', '🤣', '😊', '😇', '🙂', '🙃', '😉', '😌', '😍', '🥰', '😘', 
-                 '😗', '😙', '😚', '😋', '😛', '😜', '🤪', '😝', '🤗', '🤭', '🤫', '🤔', '🤐', '🤨', '😐', '😑',
-                 '😶', '😏', '😒', '🙄', '😬', '🤥', '😔', '😪', '🤤', '😴', '😷', '🤒', '🤕', '🤢', '🤮', '🤧',
-                 '🥵', '🥶', '🥴', '😵', '🤯', '🤠', '🥳', '😎', '🤓', '🧐', '😕', '😟', '🙁', '☹️', '😮', '😯',
-                 '😲', '😳', '🥺', '😦', '😧', '😨', '😰', '😥', '😢', '😭', '😱', '😖', '😣', '😞', '😓', '😩', '😫',
-                 '🥱', '😤', '😡', '😠', '🤬', '😈', '👿', '💀', '☠️', '💩', '🤡', '👹', '👺', '👻', '👽', '👾',
-                 '🤖', '❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '💔', '❣️', '💕', '💞', '💓', '💗', '💖', '💘',
-                 '💝', '👍', '👎', '👌', '✌️', '🤞', '🤟', '🤘', '🤙', '👈', '👉', '👆', '👇', '☝️', '✋', '🤚',
-                 '🖐️', '🖖', '👋', '🤙', '💪', '🙏', '✍️', '🌟', '⭐', '💫', '✨', '⚡', '🔥', '💥', '💢', '💨',
-                 '🦋', '🌈', '☀️', '🌙', '⭐', '🌟'].map((emoji, index) => (
-                  <button
-                    key={index}
-                    type="button"
-                    className="text-lg hover:bg-gray-100 rounded p-1 transition-colors"
-                    onClick={() => {
-                      const newInput = input + emoji;
-                      setInput(newInput);
-                      setShowEmoji(false);
-                      console.log("Added emoji:", emoji, "New input:", newInput);
-                    }}
-                  >
-                    {emoji}
-                  </button>
-                ))}
+          <div className="flex-1 relative">
+            {file && (
+              <div className="absolute -top-12 left-0 right-0 bg-blue-50 border border-blue-100 rounded-lg p-2 text-xs flex justify-between items-center animate-in slide-in-from-bottom-2">
+                <div className="flex items-center gap-2 truncate">
+                  <span className="material-icons text-blue-500 text-sm">description</span>
+                  <span className="truncate font-medium">{file.name}</span>
+                </div>
+                <button type="button" onClick={() => setFile(null)} className="text-gray-400 hover:text-red-500">
+                  <span className="material-icons text-sm">close</span>
+                </button>
               </div>
-            </div>
-          )}
-        </div>
+            )}
+            <input
+              type="text"
+              placeholder="Write a message..."
+              className="w-full bg-gray-100 border-none rounded-2xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500/20 transition-all"
+              value={input}
+              onChange={handleInputChange}
+            />
+          </div>
+          
+          <button 
+            type="submit" 
+            disabled={!input.trim() && !file}
+            className="mb-0.5 w-10 h-10 rounded-full bg-[#2563EB] text-white flex items-center justify-center hover:bg-blue-600 shadow-md shadow-blue-500/30 transition-all disabled:bg-gray-200 disabled:shadow-none disabled:text-gray-400"
+          >
+            <span className="material-icons">send</span>
+          </button>
+        </form>
         
-        <input
-          type="text"
-          className="flex-1 p-2 rounded border border-[#E5E7EB]"
-          placeholder="Type a message..."
-          value={input}
-          onChange={handleInputChange}
-        />
-        <input
-          type="file"
-          className="ml-2"
-          onChange={(e) => setFile(e.target.files?.[0] || null)}
-          accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.rar"
-        />
-        <button 
-          type="submit" 
-          className="ml-2 px-4 py-2 rounded bg-[#2563EB] text-white font-medium hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          disabled={!input.trim() && !file}
-        >
-          Send
-        </button>
-      </form>
+        {showEmoji && (
+          <div className="mt-3 p-2 bg-gray-50 rounded-xl grid grid-cols-8 gap-1 border border-gray-100 animate-in zoom-in-95 duration-200">
+            {['😀', '😂', '😍', '👍', '🔥', '✨', '🙏', '❤️', '🚀', '✅', '👋', '🎉', '💡', '🤔', '👀', '💯'].map(emoji => (
+              <button key={emoji} type="button" onClick={() => setInput(p => p + emoji)} className="p-2 hover:bg-white rounded-lg transition-colors text-lg">{emoji}</button>
+            ))}
+          </div>
+        )}
+      </footer>
     </div>
   );
 }

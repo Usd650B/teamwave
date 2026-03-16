@@ -1,9 +1,10 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { auth, db, storage } from "@/lib/firebase/firebase";
-import { updateProfile } from "firebase/auth";
-import { doc, getDoc, updateDoc, setDoc } from "firebase/firestore";
+import { updateProfile, onAuthStateChanged } from "firebase/auth";
+import { doc, getDoc, setDoc } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
 export default function ProfilePage() {
@@ -14,66 +15,73 @@ export default function ProfilePage() {
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [user, setUser] = useState(auth.currentUser);
+  const router = useRouter();
 
   useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged((currentUser) => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
+      if (!currentUser) {
+        router.replace("/login");
+      }
     });
     return () => unsubscribe();
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     const fetchUserData = async () => {
       if (!user) return;
-      
-      const userDoc = await getDoc(doc(db, "users", user.uid));
-      if (userDoc.exists()) {
-        const userData = userDoc.data();
-        setName(userData.name || user.displayName || "");
-        setJobTitle(userData.jobTitle || "");
-        setProfilePhoto(userData.profilePhoto || user.photoURL || "");
+      try {
+        const userDoc = await getDoc(doc(db, "users", user.uid));
+        if (userDoc.exists()) {
+          const userData = userDoc.data();
+          setName(userData.name || user.displayName || "");
+          setJobTitle(userData.jobTitle || "");
+          setProfilePhoto(userData.profilePhoto || user.photoURL || "");
+        } else {
+          setName(user.displayName || "");
+          setProfilePhoto(user.photoURL || "");
+        }
+      } catch (error) {
+        console.error("Error fetching user data:", error);
       }
     };
-    
+
     fetchUserData();
   }, [user]);
 
   const handleSave = async () => {
+    if (!user) return;
     setLoading(true);
     try {
-      if (!user) return;
-
       let photoUrl = profilePhoto;
-      
-      // Upload new photo if selected
+
       if (photoFile) {
         const storageRef = ref(storage, `profile-photos/${user.uid}/${Date.now()}_${photoFile.name}`);
         await uploadBytes(storageRef, photoFile);
         photoUrl = await getDownloadURL(storageRef);
       }
 
-      // Update Firebase Auth profile
       await updateProfile(user, { displayName: name, photoURL: photoUrl });
 
-      // Update Firestore document using setDoc to create if it doesn't exist
-      await setDoc(doc(db, "users", user.uid), {
-        id: user.uid,
-        name,
-        jobTitle,
-        email: user.email,
-        profilePhoto: photoUrl,
-        privacy: "public", // Always public now
-        updatedAt: new Date()
-      }, { merge: true }); // merge: true allows updating without overwriting existing fields
+      await setDoc(
+        doc(db, "users", user.uid),
+        {
+          id: user.uid,
+          name,
+          jobTitle,
+          email: user.email,
+          profilePhoto: photoUrl,
+          updatedAt: new Date(),
+        },
+        { merge: true }
+      );
 
       setProfilePhoto(photoUrl);
       setPhotoFile(null);
       setIsEditing(false);
-      
-      // Trigger a re-fetch of user data
-      setUser(auth.currentUser);
     } catch (error) {
       console.error("Error updating profile:", error);
+      alert("Failed to save profile.");
     } finally {
       setLoading(false);
     }
@@ -82,39 +90,49 @@ export default function ProfilePage() {
   const handleLogout = async () => {
     try {
       await auth.signOut();
-      window.location.href = "/";
+      router.replace("/");
     } catch (error) {
       console.error("Error signing out:", error);
     }
   };
 
+  if (!user) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#F8FAFC]">
+        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-[#2563EB]"></div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex flex-col min-h-screen bg-[#F5F5F5]">
-      <header className="flex items-center justify-between px-4 py-3 bg-white border-b border-[#E5E7EB]">
-        <h1 className="text-xl font-bold text-[#2563EB]">Profile</h1>
-        <button 
-          onClick={() => setIsEditing(!isEditing)}
-          className="text-[#2563EB] font-medium"
+    <div className="flex flex-col min-h-screen bg-[#F8FAFC]">
+      <header className="flex items-center justify-between px-6 py-4 bg-white border-b border-[#E2E8F0] sticky top-0 z-20">
+        <h1 className="text-xl font-black text-gray-900 tracking-tight">Profile</h1>
+        <button
+          onClick={() => {
+            setIsEditing(!isEditing);
+            if (isEditing) setPhotoFile(null);
+          }}
+          className="text-sm font-bold text-[#2563EB] bg-blue-50 px-4 py-1.5 rounded-full hover:bg-blue-100 transition-colors"
         >
-          {isEditing ? "Cancel" : "Edit"}
+          {isEditing ? "CANCEL" : "EDIT PROFILE"}
         </button>
       </header>
-      <main className="flex-1 flex flex-col items-center px-4 py-8">
-        <div className="relative mb-4">
-          {profilePhoto ? (
-            <img 
-              src={profilePhoto} 
-              alt="Profile" 
-              className="w-24 h-24 rounded-full object-cover"
-            />
-          ) : (
-            <div className="w-24 h-24 rounded-full bg-[#E5E7EB] flex items-center justify-center">
-              <span className="text-gray-400 text-2xl">👤</span>
-            </div>
-          )}
+
+      <main className="flex-1 flex flex-col items-center px-4 py-12 pb-24 max-w-lg mx-auto w-full">
+        <div className="relative group mb-8">
+          <div className="w-32 h-32 rounded-3xl bg-gradient-to-br from-blue-50 to-blue-100 p-1 shadow-2xl shadow-blue-500/10">
+            {profilePhoto ? (
+              <img src={profilePhoto} alt="Profile" className="w-full h-full rounded-[1.25rem] object-cover" />
+            ) : (
+              <div className="w-full h-full rounded-[1.25rem] bg-gray-50 flex items-center justify-center">
+                <span className="material-icons text-gray-300 text-5xl">person</span>
+              </div>
+            )}
+          </div>
           {isEditing && (
-            <label className="absolute bottom-0 right-0 bg-[#2563EB] text-white rounded-full w-8 h-8 flex items-center justify-center cursor-pointer">
-              <span className="text-xs">📷</span>
+            <label className="absolute -bottom-2 -right-2 bg-[#2563EB] text-white rounded-2xl w-10 h-10 flex items-center justify-center cursor-pointer shadow-lg hover:bg-blue-600 transition-all">
+              <span className="material-icons text-xl">camera_alt</span>
               <input
                 type="file"
                 accept="image/*"
@@ -124,79 +142,88 @@ export default function ProfilePage() {
             </label>
           )}
         </div>
-        
+
         {isEditing ? (
-          <div className="w-full max-w-xs space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="w-full p-2 border border-[#E5E7EB] rounded"
-                placeholder="Your name"
-              />
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Job Title</label>
-              <input
-                type="text"
-                value={jobTitle}
-                onChange={(e) => setJobTitle(e.target.value)}
-                className="w-full p-2 border border-[#E5E7EB] rounded"
-                placeholder="Your job title"
-              />
+          <div className="w-full space-y-6 bg-white p-8 rounded-3xl border border-[#E2E8F0] shadow-sm">
+            <div className="space-y-4">
+               <div>
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 mb-1.5 block">Full Name</label>
+                  <input
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className="w-full bg-gray-50 border border-[#E2E8F0] rounded-xl px-4 py-3 text-sm focus:ring-4 focus:ring-blue-500/10 transition-all outline-none"
+                    placeholder="e.g. John Doe"
+                  />
+               </div>
+               <div>
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 mb-1.5 block">Job Title</label>
+                  <input
+                    type="text"
+                    value={jobTitle}
+                    onChange={(e) => setJobTitle(e.target.value)}
+                    className="w-full bg-gray-50 border border-[#E2E8F0] rounded-xl px-4 py-3 text-sm focus:ring-4 focus:ring-blue-500/10 transition-all outline-none"
+                    placeholder="e.g. Senior Developer"
+                  />
+               </div>
             </div>
             
             <button
               onClick={handleSave}
               disabled={loading}
-              className="w-full bg-[#2563EB] text-white py-2 rounded font-medium"
+              className="w-full bg-[#1E293B] text-white py-4 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-black transition-all shadow-xl shadow-gray-200 disabled:opacity-50"
             >
-              {loading ? "Saving..." : "Save"}
+              {loading ? "SAVING..." : "SAVE CHANGES"}
             </button>
           </div>
         ) : (
-          <>
-            <h2 className="text-lg font-semibold text-[#2563EB] mb-2">{name}</h2>
-            <p className="text-gray-700 mb-2">{jobTitle}</p>
-            <div className="flex gap-4 mb-4">
-              <div className="text-center">
-                <div className="font-bold text-[#2563EB]">0</div>
-                <div className="text-xs text-gray-500">Followers</div>
-              </div>
-              <div className="text-center">
-                <div className="font-bold text-[#2563EB]">0</div>
-                <div className="text-xs text-gray-500">Following</div>
+          <div className="w-full space-y-10">
+            <div className="text-center">
+              <h2 className="text-3xl font-black text-[#1E293B] mb-1">{name || "Mysterious Colleague"}</h2>
+              <p className="text-[#2563EB] font-black text-xs uppercase tracking-widest mb-4">
+                {jobTitle || "Team Member"}
+              </p>
+              <div className="flex items-center justify-center gap-2">
+                 <span className="bg-green-100 text-green-700 text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-tighter">Available Now</span>
+                 <span className="bg-blue-50 text-[#2563EB] text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-tighter">Verified</span>
               </div>
             </div>
-            <div className="mb-4">
-              <span className="inline-block px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-800">
-                🌍 Public
-              </span>
+
+            <div className="grid grid-cols-2 gap-4">
+               <div className="bg-white p-6 rounded-3xl border border-[#E2E8F0] text-center shadow-sm">
+                  <div className="text-gray-400 text-[10px] font-black uppercase tracking-widest mb-1">Email Address</div>
+                  <div className="text-sm font-bold text-gray-900 truncate">{user.email}</div>
+               </div>
+               <a href="/notifications" className="bg-white p-6 rounded-3xl border border-[#E2E8F0] text-center shadow-sm hover:border-[#2563EB] transition-colors group">
+                  <div className="text-gray-400 text-[10px] font-black uppercase tracking-widest mb-1 group-hover:text-[#2563EB]">Settings</div>
+                  <div className="text-sm font-bold text-gray-900 flex items-center justify-center gap-1 group-hover:text-[#2563EB]">
+                    Notifications <span className="material-icons text-sm">chevron_right</span>
+                  </div>
+               </a>
             </div>
-            <button 
+
+            <button
               onClick={handleLogout}
-              className="w-full max-w-xs bg-[#E5E7EB] text-[#2563EB] py-2 rounded font-medium"
+              className="w-full bg-white text-red-500 border-2 border-red-50 py-4 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-red-50 transition-all"
             >
-              Logout
+              Sign Out from Account
             </button>
-          </>
+          </div>
         )}
       </main>
-      <nav className="fixed bottom-0 left-0 w-full bg-white border-t border-[#E5E7EB] flex justify-around py-2">
-        <a href="/home" className="flex flex-col items-center text-black">
+
+      <nav className="fixed bottom-0 left-0 w-full bg-white/80 backdrop-blur-md border-t border-[#E2E8F0] flex justify-around py-2.5 z-20">
+        <a href="/home" className="flex flex-col items-center text-gray-400 px-6 py-1 rounded-xl">
           <span className="material-icons">chat</span>
-          <span className="text-xs">Home</span>
+          <span className="text-[10px] font-bold mt-0.5">CHATS</span>
         </a>
-        <a href="/discover" className="flex flex-col items-center text-black">
-          <span className="material-icons">search</span>
-          <span className="text-xs">Discover</span>
+        <a href="/discover" className="flex flex-col items-center text-gray-400 px-6 py-1 rounded-xl">
+          <span className="material-icons">groups</span>
+          <span className="text-[10px] font-bold mt-0.5 tracking-tighter">COMMUNITY</span>
         </a>
-        <a href="/profile" className="flex flex-col items-center text-[#2563EB]">
+        <a href="/profile" className="flex flex-col items-center text-[#2563EB] px-6 py-1 rounded-xl">
           <span className="material-icons">person</span>
-          <span className="text-xs">Profile</span>
+          <span className="text-[10px] font-bold mt-0.5">PROFILE</span>
         </a>
       </nav>
     </div>

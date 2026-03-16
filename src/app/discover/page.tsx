@@ -1,305 +1,258 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import { db } from "@/lib/firebase/firebase";
-import { collection, getDocs, doc, setDoc, deleteDoc, getDoc, query, where, addDoc, serverTimestamp, onSnapshot } from "firebase/firestore";
-import { auth } from "@/lib/firebase/firebase";
+import React, { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { db, auth } from "@/lib/firebase/firebase";
+import {
+  collection,
+  query,
+  where,
+  onSnapshot,
+  getDocs,
+  setDoc,
+  doc,
+  getDoc,
+  addDoc,
+  serverTimestamp,
+} from "firebase/firestore";
+import { onAuthStateChanged } from "firebase/auth";
 
-export default function EmployeeDirectory() {
+export default function DiscoverPage() {
   const [employees, setEmployees] = useState<any[]>([]);
   const [search, setSearch] = useState("");
   const [following, setFollowing] = useState<string[]>([]);
+  const [loadingFollow, setLoadingFollow] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState(auth.currentUser);
+  const router = useRouter();
 
-  // Monitor authentication state
   useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged((user) => {
-      console.log("Auth state changed in discover:", user);
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       setCurrentUser(user);
-    });
-    
-    return unsubscribe;
-  }, []);
-
-  useEffect(() => {
-    const fetchEmployees = async () => {
-      const querySnapshot = await getDocs(collection(db, "users"));
-      setEmployees(querySnapshot.docs.map(doc => doc.data()));
-    };
-    fetchEmployees();
-  }, []);
-
-  useEffect(() => {
-    const fetchFollowing = async () => {
-      const user = currentUser;
-      if (!user) return;
-      console.log("Fetching following for user:", user.uid);
-      const followingDoc = await getDoc(doc(db, "following", user.uid));
-      if (followingDoc.exists()) {
-        const followingList = followingDoc.data().list || [];
-        console.log("Following list loaded:", followingList);
-        setFollowing(followingList);
+      if (!user) {
+        router.replace("/login");
       }
-    };
-    fetchFollowing();
-  }, [currentUser]);
+    });
+    return unsubscribeAuth;
+  }, [router]);
 
-  // Real-time listener for following changes
   useEffect(() => {
-    const user = currentUser;
-    if (!user) return;
+    if (!currentUser) return;
 
-    const followingRef = doc(db, "following", user.uid);
-    const unsubscribe = onSnapshot(followingRef, (doc) => {
-      if (doc.exists()) {
-        const followingList = doc.data().list || [];
-        console.log("Following list updated in real-time:", followingList);
-        setFollowing(followingList);
-      } else {
-        console.log("Following document deleted, clearing list");
-        setFollowing([]);
+    // Listen to following list
+    const followingRef = doc(db, "following", currentUser.uid);
+    const unsubscribeFollowing = onSnapshot(followingRef, (docSnap) => {
+      if (docSnap.exists()) {
+        setFollowing(docSnap.data().list || []);
       }
     });
 
-    return unsubscribe;
+    // Fetch all users
+    const usersRef = collection(db, "users");
+    const unsubscribeUsers = onSnapshot(usersRef, (snapshot) => {
+      const usersData = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+      setEmployees(usersData);
+    });
+
+    return () => {
+      unsubscribeFollowing();
+      unsubscribeUsers();
+    };
   }, [currentUser]);
 
   const handleFollow = async (empId: string) => {
-    const user = currentUser;
-    if (!user) {
-      console.error("=== NO AUTHENTICATED USER ===");
-      alert("Please log in to follow users.");
-      return;
-    }
-    
-    console.log("=== FOLLOWING USER ===");
-    console.log("Current user:", user.uid);
-    console.log("Following user:", empId);
-    
+    if (!currentUser) return;
+    setLoadingFollow(empId);
     try {
-      // Add to following
-      console.log("Adding to following collection...");
-      const followingRef = doc(db, "following", user.uid);
-      const followingDoc = await getDoc(followingRef);
-      let followingList = followingDoc.exists() ? followingDoc.data().list || [] : [];
-      
-      console.log("Current following list:", followingList);
-      
-      if (!followingList.includes(empId)) {
-        followingList.push(empId);
-        await setDoc(followingRef, { list: followingList });
-        setFollowing(followingList);
-        console.log("✅ Added to following:", followingList);
-      } else {
-        console.log("User already in following list");
-      }
-      
-      // Add to followers
-      console.log("Adding to followers collection...");
+      const followingRef = doc(db, "following", currentUser.uid);
+      const updatedFollowing = [...following, empId];
+      await setDoc(followingRef, { list: updatedFollowing });
+
       const followersRef = doc(db, "followers", empId);
-      const followersDoc = await getDoc(followersRef);
-      let followersList = followersDoc.exists() ? followersDoc.data().list || [] : [];
-      
-      console.log("Current followers list:", followersList);
-      
-      if (!followersList.includes(user.uid)) {
-        followersList.push(user.uid);
+      const followersSnap = await getDoc(followersRef);
+      let followersList = followersSnap.exists() ? followersSnap.data().list || [] : [];
+      if (!followersList.includes(currentUser.uid)) {
+        followersList.push(currentUser.uid);
         await setDoc(followersRef, { list: followersList });
-        console.log("✅ Added to followers:", followersList);
-      } else {
-        console.log("User already in followers list");
       }
-      
-      console.log("=== FOLLOW SUCCESSFUL ===");
-      alert("Successfully followed user!");
-    } catch (error) {
-      console.error("=== ERROR FOLLOWING USER ===");
-      console.error("Error details:", error);
-      
-      const firebaseError = error as any;
-      console.error("Error code:", firebaseError.code);
-      console.error("Error message:", firebaseError.message);
-      
-      if (firebaseError.code === 'permission-denied') {
-        alert("Permission denied. Please check Firebase security rules.");
-      } else {
-        alert("Failed to follow user: " + (firebaseError.message || "Unknown error"));
-      }
+    } catch (error: any) {
+      console.error("Error following user:", error);
+      alert("Failed to follow: " + (error.message || "Unknown error"));
+    } finally {
+      setLoadingFollow(null);
     }
   };
 
   const handleUnfollow = async (empId: string) => {
-    const user = currentUser;
-    if (!user) {
-      console.error("=== NO AUTHENTICATED USER ===");
-      alert("Please log in to unfollow users.");
-      return;
-    }
-    
-    console.log("=== UNFOLLOWING USER ===");
-    console.log("Current user:", user.uid);
-    console.log("Unfollowing user:", empId);
-    
+    if (!currentUser) return;
+    setLoadingFollow(empId);
     try {
-      // Remove from following
-      console.log("Removing from following collection...");
-      const followingRef = doc(db, "following", user.uid);
-      const followingDoc = await getDoc(followingRef);
-      let followingList = followingDoc.exists() ? followingDoc.data().list || [] : [];
-      
-      console.log("Current following list:", followingList);
-      
-      followingList = followingList.filter((id: string) => id !== empId);
-      await setDoc(followingRef, { list: followingList });
-      setFollowing(followingList);
-      console.log("✅ Removed from following:", followingList);
-      
-      // Remove from followers
-      console.log("Removing from followers collection...");
+      const followingRef = doc(db, "following", currentUser.uid);
+      const updatedFollowing = following.filter((id: string) => id !== empId);
+      await setDoc(followingRef, { list: updatedFollowing });
+
       const followersRef = doc(db, "followers", empId);
-      const followersDoc = await getDoc(followersRef);
-      let followersList = followersDoc.exists() ? followersDoc.data().list || [] : [];
-      
-      console.log("Current followers list:", followersList);
-      
-      followersList = followersList.filter((id: string) => id !== user.uid);
+      const followersSnap = await getDoc(followersRef);
+      let followersList = followersSnap.exists() ? followersSnap.data().list || [] : [];
+      followersList = followersList.filter((id: string) => id !== currentUser.uid);
       await setDoc(followersRef, { list: followersList });
-      console.log("✅ Removed from followers:", followersList);
-      
-      console.log("=== UNFOLLOW SUCCESSFUL ===");
-      alert("Successfully unfollowed user!");
-    } catch (error) {
-      console.error("=== ERROR UNFOLLOWING USER ===");
-      console.error("Error details:", error);
-      
-      const firebaseError = error as any;
-      console.error("Error code:", firebaseError.code);
-      console.error("Error message:", firebaseError.message);
-      
-      if (firebaseError.code === 'permission-denied') {
-        alert("Permission denied. Please check Firebase security rules.");
-      } else {
-        alert("Failed to unfollow user: " + (firebaseError.message || "Unknown error"));
-      }
+    } catch (error: any) {
+      console.error("Error unfollowing user:", error);
+      alert("Failed to unfollow: " + (error.message || "Unknown error"));
+    } finally {
+      setLoadingFollow(null);
     }
   };
 
-  const handleChat = async (empId: string) => {
-    const user = auth.currentUser;
-    if (!user) return;
-    
-    // Check if conversation already exists
-    const conversationsRef = collection(db, "conversations");
-    const q = query(
-      conversationsRef,
-      where("participants", "array-contains", user.uid)
-    );
-    
-    const querySnapshot = await getDocs(q);
-    const existingConversation = querySnapshot.docs.find(doc => {
-      const participants = doc.data().participants;
-      return participants.includes(empId) && participants.length === 2;
-    });
-    
-    if (existingConversation) {
-      // Navigate to existing conversation
-      window.location.href = `/chat/${existingConversation.id}`;
-    } else {
-      // Create new conversation
-      const newConversation = await addDoc(conversationsRef, {
-        participants: [user.uid, empId],
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        name: "", // Will be populated with the other user's name
+  const handleChat = async (emp: any) => {
+    if (!currentUser) return;
+
+    try {
+      const conversationsRef = collection(db, "conversations");
+      const q = query(conversationsRef, where("participants", "array-contains", currentUser.uid));
+      const querySnapshot = await getDocs(q);
+
+      const existingConversation = querySnapshot.docs.find((doc) => {
+        const participants = doc.data().participants;
+        return participants.includes(emp.id) && participants.length === 2 && !doc.data().isGroup;
       });
-      
-      // Navigate to new conversation
-      window.location.href = `/chat/${newConversation.id}`;
+
+      if (existingConversation) {
+        router.push(`/chat/${existingConversation.id}`);
+      } else {
+        const newConversation = await addDoc(conversationsRef, {
+          participants: [currentUser.uid, emp.id],
+          name: emp.name || "Private Chat",
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          lastMessage: "Chat started",
+          isGroup: false
+        });
+        router.push(`/chat/${newConversation.id}`);
+      }
+    } catch (error: any) {
+      console.error("Error starting chat:", error);
+      alert("Failed to start chat.");
     }
   };
 
-  const filtered = employees.filter(emp => {
-    // Don't show current user
-    if (emp.id === auth.currentUser?.uid) return false;
-    
-    // All users are public now - no privacy filtering
-    // Search filter
-    return emp.name.toLowerCase().includes(search.toLowerCase()) ||
-           (emp.jobTitle || "").toLowerCase().includes(search.toLowerCase());
+  const filtered = employees.filter((emp) => {
+    if (emp.id === currentUser?.uid) return false;
+    const name = emp.name || "";
+    const jobTitle = emp.jobTitle || "";
+    return (
+      name.toLowerCase().includes(search.toLowerCase()) ||
+      jobTitle.toLowerCase().includes(search.toLowerCase())
+    );
   });
 
   return (
-    <div className="flex flex-col min-h-screen bg-[#F5F5F5]">
-      <header className="flex items-center justify-between px-4 py-3 bg-white border-b border-[#E5E7EB]">
-        <h1 className="text-xl font-bold text-[#2563EB]">Discover Employees</h1>
+    <div className="flex flex-col min-h-screen bg-[#F8FAFC]">
+      <header className="flex items-center justify-between px-4 py-3 bg-white border-b border-[#E2E8F0] sticky top-0 z-20">
+        <div className="flex items-center gap-3">
+          <button onClick={() => router.back()} className="text-gray-400 hover:text-[#2563EB] transition-colors">
+            <span className="material-icons">arrow_back</span>
+          </button>
+          <h1 className="text-xl font-bold text-gray-900">Connections</h1>
+        </div>
       </header>
-      <main className="flex-1 flex flex-col items-center px-4 py-8">
-        <h2 className="text-lg font-semibold text-[#2563EB] mb-2">Employee Directory</h2>
-        <input
-          type="text"
-          placeholder="Search employees..."
-          className="w-full max-w-md mb-4 p-2 border border-[#E5E7EB] rounded"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-        />
-        <div className="w-full max-w-md bg-white rounded shadow p-4">
-          {filtered.length === 0 ? (
-            <div className="text-gray-400 text-center">No employees found.</div>
-          ) : (
-            filtered.map(emp => (
-              <div key={emp.id} className="flex items-center gap-4 py-2 border-b border-[#E5E7EB] last:border-b-0">
-                <div className="w-10 h-10 rounded-full bg-[#E5E7EB] flex items-center justify-center">
-                  {emp.profilePhoto ? (
-                    <img 
-                      src={emp.profilePhoto} 
-                      alt={emp.name} 
-                      className="w-10 h-10 rounded-full object-cover"
-                    />
-                  ) : (
-                    <span className="text-gray-400 text-lg">👤</span>
-                  )}
+
+      <main className="flex-1 flex flex-col items-center px-4 py-8 pb-24">
+        <div className="w-full max-w-md space-y-6">
+          <div className="text-center space-y-2">
+            <h2 className="text-2xl font-black text-[#1E293B]">Find your team</h2>
+            <p className="text-sm text-gray-400 font-bold uppercase tracking-widest">Employee Directory</p>
+          </div>
+
+          <div className="relative group">
+            <span className="material-icons absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">search</span>
+            <input
+              type="text"
+              placeholder="Search by name or title..."
+              className="w-full pl-12 pr-4 py-3.5 bg-white border border-[#E2E8F0] rounded-2xl shadow-sm focus:ring-4 focus:ring-blue-500/10 focus:border-[#2563EB] outline-none transition-all font-medium text-sm"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+
+          <div className="space-y-3">
+            {filtered.length === 0 ? (
+              <div className="bg-white rounded-3xl p-12 text-center border border-dashed border-[#E2E8F0]">
+                <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <span className="material-icons text-gray-200 text-3xl">person_search</span>
                 </div>
-                <div className="flex-1">
-                  <div className="font-semibold text-black">{emp.name}</div>
-                  <div className="text-xs text-gray-500">{emp.jobTitle || ""}</div>
-                  <div className="text-xs text-gray-400">
-                    🌍 Public
+                <p className="text-gray-400 font-bold text-sm uppercase tracking-wider">
+                  {employees.length === 0 ? "Building directory..." : "No matching colleagues"}
+                </p>
+              </div>
+            ) : (
+              filtered.map((emp) => (
+                <div key={emp.id} className="bg-white rounded-2xl p-4 shadow-sm border border-[#E2E8F0] hover:border-[#2563EB]/30 transition-all flex items-center gap-4 group">
+                  <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-50 to-blue-100 flex items-center justify-center flex-shrink-0 relative">
+                    {emp.profilePhoto ? (
+                      <img src={emp.profilePhoto} alt={emp.name} className="w-full h-full rounded-2xl object-cover shadow-inner" />
+                    ) : (
+                      <span className="material-icons text-blue-300 text-2xl">person</span>
+                    )}
+                    <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 border-2 border-white rounded-full"></div>
+                  </div>
+                  
+                  <div className="flex-1 min-w-0">
+                    <div className="font-bold text-gray-900 truncate">{emp.name || "Unknown User"}</div>
+                    <div className="text-[10px] text-blue-500 font-black uppercase tracking-wider truncate mb-1">{emp.jobTitle || "Team Member"}</div>
+                    <div className="flex items-center gap-1 text-[10px] text-gray-400 font-bold">
+                      <span className="material-icons text-[10px]">location_on</span>
+                      REMOTE
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    {following.includes(emp.id) ? (
+                      <button
+                        onClick={() => handleUnfollow(emp.id)}
+                        disabled={loadingFollow === emp.id}
+                        className="px-4 py-1.5 rounded-xl border-2 border-blue-50 text-[#2563EB] text-[10px] font-black uppercase tracking-widest hover:bg-blue-50 transition-colors disabled:opacity-50"
+                      >
+                        {loadingFollow === emp.id ? "..." : "Following"}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleFollow(emp.id)}
+                        disabled={loadingFollow === emp.id}
+                        className="px-4 py-1.5 rounded-xl bg-[#2563EB] text-white text-[10px] font-black uppercase tracking-widest hover:bg-blue-600 shadow-md shadow-blue-500/20 transition-all disabled:opacity-50"
+                      >
+                        {loadingFollow === emp.id ? "..." : "Follow"}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleChat(emp)}
+                      className="px-4 py-1.5 rounded-xl bg-gray-900 text-white text-[10px] font-black uppercase tracking-widest hover:bg-black transition-colors flex items-center justify-center gap-1"
+                    >
+                      <span className="material-icons text-[12px]">chat</span>
+                      Message
+                    </button>
                   </div>
                 </div>
-                <div className="flex gap-2">
-                  {following.includes(emp.id) ? (
-                    <button
-                      className="px-3 py-1 rounded bg-[#E5E7EB] text-[#2563EB] text-xs font-medium"
-                      onClick={() => handleUnfollow(emp.id)}
-                    >Unfollow</button>
-                  ) : (
-                    <button
-                      className="px-3 py-1 rounded bg-[#2563EB] text-white text-xs font-medium"
-                      onClick={() => handleFollow(emp.id)}
-                    >Follow</button>
-                  )}
-                  <button
-                    className="px-3 py-1 rounded bg-green-500 text-white text-xs font-medium"
-                    onClick={() => handleChat(emp.id)}
-                  >Chat</button>
-                </div>
-              </div>
-            ))
-          )}
+              ))
+            )}
+          </div>
         </div>
       </main>
-      <nav className="fixed bottom-0 left-0 w-full bg-white border-t border-[#E5E7EB] flex justify-around py-2">
-        <a href="/home" className="flex flex-col items-center text-black">
+
+      <nav className="fixed bottom-0 left-0 w-full bg-white/80 backdrop-blur-md border-t border-[#E2E8F0] flex justify-around py-2.5 z-20">
+        <a href="/home" className="flex flex-col items-center text-gray-400 px-6 py-1 rounded-xl">
           <span className="material-icons">chat</span>
-          <span className="text-xs">Home</span>
+          <span className="text-[10px] font-bold mt-0.5">CHATS</span>
         </a>
-        <a href="/discover" className="flex flex-col items-center text-[#2563EB]">
-          <span className="material-icons">search</span>
-          <span className="text-xs">Discover</span>
+        <a href="/groups" className="flex flex-col items-center text-gray-400 px-6 py-1 rounded-xl">
+          <span className="material-icons">groups</span>
+          <span className="text-[10px] font-bold mt-0.5 tracking-tighter">COMMUNITY</span>
         </a>
-        <a href="/profile" className="flex flex-col items-center text-black">
+        <a href="/profile" className="flex flex-col items-center text-gray-400 px-6 py-1 rounded-xl">
           <span className="material-icons">person</span>
-          <span className="text-xs">Profile</span>
+          <span className="text-[10px] font-bold mt-0.5">PROFILE</span>
         </a>
       </nav>
     </div>

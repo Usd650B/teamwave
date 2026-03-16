@@ -3,27 +3,25 @@
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { db, auth, storage } from "@/lib/firebase/firebase";
-import { collection, query, where, onSnapshot, orderBy, getDocs, doc, updateDoc, deleteDoc } from "firebase/firestore";
-import { getStorage, ref, listAll, getDownloadURL } from "firebase/storage";
-import { getMetadata } from "firebase/storage";
+import { collection, query, orderBy, getDocs, doc, updateDoc, deleteDoc } from "firebase/firestore";
+import { ref, listAll, getDownloadURL, getMetadata } from "firebase/storage";
+import { onAuthStateChanged } from "firebase/auth";
 
 interface User {
   id: string;
+  name: string;
   email: string;
-  displayName: string;
-  role: string;
-  lastLogin: any;
-  createdAt: any;
+  jobTitle: string;
   isActive: boolean;
+  createdAt: any;
 }
 
 interface Conversation {
   id: string;
   name: string;
   participants: string[];
-  createdAt: any;
-  lastActivity: any;
-  messageCount: number;
+  lastMessage: string;
+  updatedAt: any;
 }
 
 interface FileData {
@@ -31,49 +29,50 @@ interface FileData {
   size: number;
   type: string;
   url: string;
-  uploadedAt: any;
-  uploadedBy: string;
+  uploader?: string;
+  chatId: string;
+  fullPath: string;
 }
 
 export default function AdminDashboard() {
   const [users, setUsers] = useState<User[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [files, setFiles] = useState<FileData[]>([]);
+  const [activeTab, setActiveTab] = useState("users");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [activeTab, setActiveTab] = useState("users");
   const [isAdmin, setIsAdmin] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
-    checkAdminAccess();
+    const unsubscribe = checkAdminAccess();
+    return () => { if (unsubscribe) unsubscribe(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const checkAdminAccess = async () => {
-    const user = auth.currentUser;
-    if (!user) {
-      router.push("/login");
-      return;
-    }
-
-    // Check if user is admin (you can implement your own logic)
-    const adminEmails = ["admin@teamwave.com", "mabessa@example.com"]; // Add your admin emails
-    if (!adminEmails.includes(user.email || "")) {
-      setError("Access denied. Admin privileges required.");
-      return;
-    }
-
-    setIsAdmin(true);
-    loadAdminData();
+  const checkAdminAccess = () => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (!user) {
+        router.push("/login");
+        return;
+      }
+      const adminEmails = ["admin@teamwave.com", "mabessa@example.com", "admin@example.com"];
+      if (!adminEmails.includes(user.email || "")) {
+        setError("Access denied. Admin privileges required.");
+        setLoading(false);
+        return;
+      }
+      setIsAdmin(true);
+      loadAdminData();
+    });
+    return unsubscribe;
   };
 
   const loadAdminData = async () => {
+    setLoading(true);
     try {
-      setLoading(true);
-      
       // Load users
-      const usersQuery = query(collection(db, "users"));
-      const usersSnapshot = await getDocs(usersQuery);
+      const usersSnapshot = await getDocs(collection(db, "users"));
       const usersData = usersSnapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
@@ -81,7 +80,7 @@ export default function AdminDashboard() {
       setUsers(usersData);
 
       // Load conversations
-      const conversationsQuery = query(collection(db, "conversations"), orderBy("lastActivity", "desc"));
+      const conversationsQuery = query(collection(db, "conversations"), orderBy("updatedAt", "desc"));
       const conversationsSnapshot = await getDocs(conversationsQuery);
       const conversationsData = conversationsSnapshot.docs.map(doc => ({
         id: doc.id,
@@ -89,284 +88,288 @@ export default function AdminDashboard() {
       })) as Conversation[];
       setConversations(conversationsData);
 
-      // Load files
-      const storage = getStorage();
-      const filesRef = ref(storage, "uploads");
-      const filesList = await listAll(filesRef);
+      // Load files from storage (recursively through chatId folders)
+      const uploadsRef = ref(storage, "uploads");
+      const rootList = await listAll(uploadsRef);
       
-      const filesData: FileData[] = [];
-      for (const item of filesList.items) {
+      const allFiles: FileData[] = [];
+      
+      // Check files in root (if any)
+      for (const item of rootList.items) {
+        const metadata = await getMetadata(item);
         const url = await getDownloadURL(item);
-        // Extract basic info from the file name
-        const nameParts = item.name.split('_');
-        const timestamp = nameParts[0] || '';
-        const fileName = nameParts.slice(1).join('_') || item.name;
-        
-        filesData.push({
-          name: fileName,
-          size: 0, // Size not available without getMetadata
-          type: "unknown",
+        allFiles.push({
+          name: item.name,
+          size: metadata.size,
+          type: metadata.contentType || "unknown",
           url,
-          uploadedAt: timestamp ? new Date(parseInt(timestamp)) : new Date(),
-          uploadedBy: "unknown"
+          chatId: "root",
+          fullPath: item.fullPath
         });
       }
-      setFiles(filesData);
 
-    } catch (error) {
-      console.error("Error loading admin data:", error);
-      setError("Failed to load admin data");
+      // Check subfolders (chatId folders)
+      for (const folder of rootList.prefixes) {
+        const folderList = await listAll(folder);
+        for (const item of folderList.items) {
+          try {
+            const metadata = await getMetadata(item);
+            const url = await getDownloadURL(item);
+            allFiles.push({
+              name: item.name,
+              size: metadata.size,
+              type: metadata.contentType || "unknown",
+              url,
+              chatId: folder.name,
+              fullPath: item.fullPath
+            });
+          } catch (e) {
+            console.warn("Could not fetch metadata for", item.fullPath);
+          }
+        }
+      }
+      
+      setFiles(allFiles);
+    } catch (err: any) {
+      setError("Error loading admin data: " + err.message);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleToggleUserStatus = async (userId: string, currentStatus: boolean) => {
+  const toggleUserStatus = async (userId: string, currentStatus: boolean) => {
     try {
       await updateDoc(doc(db, "users", userId), {
         isActive: !currentStatus
       });
       loadAdminData();
-    } catch (error) {
-      console.error("Error updating user status:", error);
+    } catch (err: any) {
+      alert("Error updating user: " + err.message);
     }
   };
 
-  const handleDeleteConversation = async (conversationId: string) => {
-    if (!confirm("Are you sure you want to delete this conversation?")) return;
-    
+  const deleteConversation = async (chatId: string) => {
+    if (!confirm("Are you sure you want to delete this conversation? This cannot be undone.")) return;
     try {
-      await deleteDoc(doc(db, "conversations", conversationId));
+      await deleteDoc(doc(db, "conversations", chatId));
       loadAdminData();
-    } catch (error) {
-      console.error("Error deleting conversation:", error);
+    } catch (err: any) {
+      alert("Error deleting conversation: " + err.message);
     }
   };
 
-  const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return '0 Bytes';
+  const formatSize = (bytes: number) => {
+    if (bytes === 0) return '0 B';
     const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const sizes = ['B', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   };
 
-  if (!isAdmin) {
+  if (loading) {
     return (
-      <div className="flex flex-col min-h-screen bg-[#F5F5F5]">
-        <header className="flex items-center justify-between px-4 py-3 bg-white border-b border-[#E5E7EB]">
-          <h1 className="text-xl font-bold text-[#2563EB]">Admin Dashboard</h1>
-        </header>
-        <main className="flex-1 flex items-center justify-center px-4">
-          <div className="text-center">
-            <h2 className="text-2xl font-semibold text-red-600 mb-2">Access Denied</h2>
-            <p className="text-gray-700">{error}</p>
-            <button 
-              onClick={() => router.push("/home")}
-              className="mt-4 px-6 py-2 rounded bg-[#2563EB] text-white font-medium"
-            >
-              Back to Home
-            </button>
-          </div>
-        </main>
+      <div className="flex min-h-screen items-center justify-center bg-[#F5F5F5]">
+        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-[#2563EB]"></div>
+      </div>
+    );
+  }
+
+  if (error && !isAdmin) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#F5F5F5] p-4 text-center">
+        <div className="bg-white p-8 rounded-lg shadow-md max-w-sm">
+          <div className="text-red-500 text-5xl mb-4">🚫</div>
+          <h2 className="text-xl font-bold mb-2">Access Denied</h2>
+          <p className="text-gray-500 mb-6">{error}</p>
+          <button onClick={() => router.push("/home")} className="bg-[#2563EB] text-white px-6 py-2 rounded font-medium">
+            Return Home
+          </button>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col min-h-screen bg-[#F5F5F5]">
-      <header className="flex items-center justify-between px-4 py-3 bg-white border-b border-[#E5E7EB]">
-        <h1 className="text-xl font-bold text-[#2563EB]">Admin Dashboard</h1>
-        <button 
-          onClick={() => router.push("/home")}
-          className="px-4 py-2 rounded bg-gray-200 text-gray-700 font-medium"
-        >
-          Back to Home
+    <div className="flex flex-col min-h-screen bg-[#F8FAFC]">
+      <header className="bg-[#1E293B] text-white px-6 py-4 flex justify-between items-center shadow-lg">
+        <div className="flex items-center gap-3">
+          <div className="bg-[#2563EB] p-2 rounded-lg">
+            <span className="material-icons">admin_panel_settings</span>
+          </div>
+          <div>
+            <h1 className="text-xl font-bold tracking-tight">Admin Terminal</h1>
+            <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">TeamWave System Control</p>
+          </div>
+        </div>
+        <button onClick={() => router.push("/home")} className="text-sm border border-white/20 px-4 py-1.5 rounded-full hover:bg-white/10 transition-all">
+          Exit Admin
         </button>
       </header>
 
-      <div className="flex-1 flex">
+      <div className="flex-1 flex overflow-hidden">
         {/* Sidebar */}
-        <div className="w-64 bg-white border-r border-[#E5E7EB] p-4">
-          <nav className="space-y-2">
+        <nav className="w-64 bg-white border-r border-[#E2E8F0] py-6 hidden md:block">
+          <div className="px-4 space-y-1">
             <button
               onClick={() => setActiveTab("users")}
-              className={`w-full text-left px-3 py-2 rounded ${activeTab === "users" ? "bg-[#2563EB] text-white" : "hover:bg-gray-100"}`}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all ${activeTab === "users" ? "bg-[#2563EB] text-white shadow-md shadow-blue-500/20" : "text-gray-500 hover:bg-gray-50"}`}
             >
-              👥 Users ({users.length})
+              <span className="material-icons text-xl">people</span>
+              <span>Users</span>
             </button>
             <button
               onClick={() => setActiveTab("conversations")}
-              className={`w-full text-left px-3 py-2 rounded ${activeTab === "conversations" ? "bg-[#2563EB] text-white" : "hover:bg-gray-100"}`}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all ${activeTab === "conversations" ? "bg-[#2563EB] text-white shadow-md shadow-blue-500/20" : "text-gray-500 hover:bg-gray-50"}`}
             >
-              💬 Conversations ({conversations.length})
+              <span className="material-icons text-xl">chat</span>
+              <span>Chats</span>
             </button>
             <button
               onClick={() => setActiveTab("files")}
-              className={`w-full text-left px-3 py-2 rounded ${activeTab === "files" ? "bg-[#2563EB] text-white" : "hover:bg-gray-100"}`}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all ${activeTab === "files" ? "bg-[#2563EB] text-white shadow-md shadow-blue-500/20" : "text-gray-500 hover:bg-gray-50"}`}
             >
-              📁 Files ({files.length})
+              <span className="material-icons text-xl">folder_shared</span>
+              <span>Files</span>
             </button>
-          </nav>
-        </div>
+          </div>
+        </nav>
 
-        {/* Main Content */}
-        <div className="flex-1 p-6">
-          {loading ? (
-            <div className="flex items-center justify-center h-64">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#2563EB]"></div>
+        {/* Main Content Area */}
+        <main className="flex-1 overflow-y-auto p-6">
+          {activeTab === "users" && (
+            <div className="space-y-6">
+              <div className="flex justify-between items-end">
+                <h2 className="text-2xl font-bold text-[#1E293B]">User Management</h2>
+                <span className="text-xs font-bold text-gray-400 uppercase">{users.length} Users Total</span>
+              </div>
+              <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden">
+                <table className="w-full text-left">
+                  <thead className="bg-[#F8FAFC] border-b border-[#E2E8F0]">
+                    <tr>
+                      <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">User</th>
+                      <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Role/Status</th>
+                      <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#E2E8F0]">
+                    {users.map(user => (
+                      <tr key={user.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-6 py-4">
+                          <div className="font-bold text-gray-900">{user.name}</div>
+                          <div className="text-xs text-gray-500">{user.email}</div>
+                          <div className="text-[10px] text-blue-500 font-medium uppercase mt-1">{user.jobTitle || 'No Title'}</div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-tight ${user.isActive !== false ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
+                            {user.isActive !== false ? "Active" : "Disabled"}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <button
+                            onClick={() => toggleUserStatus(user.id, user.isActive !== false)}
+                            className={`text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 rounded-lg border transition-all ${user.isActive !== false ? "border-red-200 text-red-600 hover:bg-red-50" : "border-green-200 text-green-600 hover:bg-green-50"}`}
+                          >
+                            {user.isActive !== false ? "Freeze" : "Restore"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          ) : (
-            <>
-              {/* Users Tab */}
-              {activeTab === "users" && (
-                <div>
-                  <h2 className="text-2xl font-bold text-[#2563EB] mb-4">User Management</h2>
-                  <div className="bg-white rounded-lg shadow overflow-hidden">
-                    <table className="w-full">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">User</th>
-                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Role</th>
-                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Last Login</th>
-                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-200">
-                        {users.map(user => (
-                          <tr key={user.id}>
-                            <td className="px-4 py-3">
-                              <div>
-                                <div className="font-medium">{user.displayName || user.email}</div>
-                                <div className="text-sm text-gray-500">{user.email}</div>
-                              </div>
-                            </td>
-                            <td className="px-4 py-3">
-                              <span className="px-2 py-1 text-xs font-medium rounded bg-blue-100 text-blue-800">
-                                {user.role || "user"}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3">
-                              <span className={`px-2 py-1 text-xs font-medium rounded ${
-                                user.isActive ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"
-                              }`}>
-                                {user.isActive ? "Active" : "Inactive"}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3 text-sm text-gray-500">
-                              {user.lastLogin?.toDate?.() ? new Date(user.lastLogin.toDate()).toLocaleDateString() : "Never"}
-                            </td>
-                            <td className="px-4 py-3">
-                              <button
-                                onClick={() => handleToggleUserStatus(user.id, user.isActive)}
-                                className={`px-3 py-1 text-xs font-medium rounded ${
-                                  user.isActive ? "bg-red-500 text-white" : "bg-green-500 text-white"
-                                }`}
-                              >
-                                {user.isActive ? "Deactivate" : "Activate"}
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {/* Conversations Tab */}
-              {activeTab === "conversations" && (
-                <div>
-                  <h2 className="text-2xl font-bold text-[#2563EB] mb-4">Conversation Management</h2>
-                  <div className="bg-white rounded-lg shadow overflow-hidden">
-                    <table className="w-full">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Participants</th>
-                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Messages</th>
-                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Last Activity</th>
-                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-200">
-                        {conversations.map(conv => (
-                          <tr key={conv.id}>
-                            <td className="px-4 py-3 font-medium">{conv.name || "Unnamed"}</td>
-                            <td className="px-4 py-3 text-sm text-gray-500">{conv.participants?.length || 0}</td>
-                            <td className="px-4 py-3 text-sm text-gray-500">{conv.messageCount || 0}</td>
-                            <td className="px-4 py-3 text-sm text-gray-500">
-                              {conv.lastActivity?.toDate?.() ? new Date(conv.lastActivity.toDate()).toLocaleDateString() : "Never"}
-                            </td>
-                            <td className="px-4 py-3">
-                              <button
-                                onClick={() => handleDeleteConversation(conv.id)}
-                                className="px-3 py-1 text-xs font-medium rounded bg-red-500 text-white"
-                              >
-                                Delete
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {/* Files Tab */}
-              {activeTab === "files" && (
-                <div>
-                  <h2 className="text-2xl font-bold text-[#2563EB] mb-4">File Management</h2>
-                  <div className="bg-white rounded-lg shadow overflow-hidden">
-                    <table className="w-full">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
-                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Size</th>
-                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Uploaded By</th>
-                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
-                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-200">
-                        {files.map((file, index) => (
-                          <tr key={index}>
-                            <td className="px-4 py-3 font-medium">{file.name}</td>
-                            <td className="px-4 py-3 text-sm text-gray-500">{file.type}</td>
-                            <td className="px-4 py-3 text-sm text-gray-500">{formatFileSize(file.size)}</td>
-                            <td className="px-4 py-3 text-sm text-gray-500">{file.uploadedBy}</td>
-                            <td className="px-4 py-3 text-sm text-gray-500">
-                              {file.uploadedAt ? new Date(file.uploadedAt).toLocaleDateString() : "Unknown"}
-                            </td>
-                            <td className="px-4 py-3">
-                              <a
-                                href={file.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="px-3 py-1 text-xs font-medium rounded bg-blue-500 text-white mr-2"
-                              >
-                                View
-                              </a>
-                              <button
-                                onClick={() => window.open(file.url, '_blank')}
-                                className="px-3 py-1 text-xs font-medium rounded bg-green-500 text-white"
-                              >
-                                Download
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </>
           )}
-        </div>
+
+          {activeTab === "conversations" && (
+            <div className="space-y-6">
+               <div className="flex justify-between items-end">
+                <h2 className="text-2xl font-bold text-[#1E293B]">System Chats</h2>
+                <span className="text-xs font-bold text-gray-400 uppercase">{conversations.length} Active Rooms</span>
+              </div>
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                {conversations.map(conv => (
+                  <div key={conv.id} className="bg-white p-5 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col group hover:border-[#2563EB] transition-colors">
+                    <div className="flex justify-between items-start mb-3">
+                      <div>
+                        <h3 className="font-bold text-gray-900">{conv.name || "Unnamed Chat"}</h3>
+                        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">ID: {conv.id}</p>
+                      </div>
+                      <button
+                        onClick={() => deleteConversation(conv.id)}
+                        className="text-gray-300 hover:text-red-500 transition-colors"
+                      >
+                        <span className="material-icons text-xl">delete_sweep</span>
+                      </button>
+                    </div>
+                    <div className="flex gap-2 mb-4">
+                      {conv.participants?.length || 0} participants
+                    </div>
+                    <div className="mt-auto pt-3 border-t border-gray-50 flex items-center justify-between">
+                       <div className="text-xs text-gray-500 italic max-w-[200px] truncate">
+                        &quot;{conv.lastMessage || "No messages"}&quot;
+                       </div>
+                       <div className="text-[10px] font-bold text-gray-300">
+                        {conv.updatedAt?.toDate?.() ? conv.updatedAt.toDate().toLocaleDateString() : ""}
+                       </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {activeTab === "files" && (
+            <div className="space-y-6">
+              <div className="flex justify-between items-end">
+                <h2 className="text-2xl font-bold text-[#1E293B]">Storage Terminal</h2>
+                <span className="text-xs font-bold text-gray-400 uppercase">{files.length} Shared Files</span>
+              </div>
+              <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden">
+                <table className="w-full text-left">
+                  <thead className="bg-[#F8FAFC] border-b border-[#E2E8F0]">
+                    <tr>
+                      <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Filename</th>
+                      <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Size</th>
+                      <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Context</th>
+                      <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Download</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#E2E8F0]">
+                    {files.map((file, idx) => (
+                      <tr key={idx} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <span className="material-icons text-gray-400">description</span>
+                            <div className="min-w-0">
+                               <div className="font-bold text-sm text-gray-900 truncate max-w-[200px]">{file.name}</div>
+                               <div className="text-[10px] text-gray-400 uppercase truncate">{file.type}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-xs font-bold text-gray-600">{formatSize(file.size)}</td>
+                        <td className="px-6 py-4">
+                          <span className="text-[10px] font-bold text-blue-500 bg-blue-50 px-2 py-1 rounded-md">
+                            CHAT: {file.chatId.substring(0, 8)}...
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <a href={file.url} target="_blank" rel="noreferrer" className="text-blue-500 hover:text-blue-700 font-bold text-xs uppercase">
+                            View File
+                          </a>
+                        </td>
+                      </tr>
+                    ))}
+                    {files.length === 0 && (
+                      <tr>
+                        <td colSpan={4} className="px-6 py-12 text-center text-gray-400 italic">No files found in storage.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </main>
       </div>
     </div>
   );

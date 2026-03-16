@@ -1,196 +1,306 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { db } from "@/lib/firebase/firebase";
-import { collection, query, where, onSnapshot, orderBy, getDocs } from "firebase/firestore";
-import { auth } from "@/lib/firebase/firebase";
+import { useRouter } from "next/navigation";
+import { db, auth } from "@/lib/firebase/firebase";
+import { collection, query, where, onSnapshot, orderBy, getDocs, doc, getDoc } from "firebase/firestore";
+import { onAuthStateChanged } from "firebase/auth";
+
+interface Conversation {
+  id: string;
+  name?: string;
+  participants: string[];
+  isGroup?: boolean;
+  lastMessage?: string;
+  updatedAt?: any;
+  isActive?: boolean;
+  unread?: boolean;
+}
+
+interface UserProfile {
+  id: string;
+  name?: string;
+  profilePhoto?: string;
+  jobTitle?: string;
+}
 
 export default function ChatList() {
-  const [conversations, setConversations] = useState<any[]>([]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [userCache, setUserCache] = useState<Record<string, UserProfile>>({});
   const [searchQuery, setSearchQuery] = useState("");
   const [showGlobalSearch, setShowGlobalSearch] = useState(false);
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [currentUser, setCurrentUser] = useState(auth.currentUser);
+  const router = useRouter();
 
+  // Wait for auth state
   useEffect(() => {
-    const user = auth.currentUser;
-    if (!user) return;
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      setCurrentUser(user);
+      if (!user) {
+        router.replace("/login");
+      }
+    });
+    return unsubscribeAuth;
+  }, [router]);
+
+  // Subscribe to conversations
+  useEffect(() => {
+    if (!currentUser) return;
+
     const q = query(
       collection(db, "conversations"),
-      where("participants", "array-contains", user.uid),
+      where("participants", "array-contains", currentUser.uid),
       orderBy("updatedAt", "desc")
     );
-    const unsubscribe = onSnapshot(q, snapshot => {
-      setConversations(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
+    const unsubscribe = onSnapshot(q, 
+      async (snapshot) => {
+        const convs = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Conversation));
+        setConversations(convs);
+
+        // Fetch user info for private chats to get correct names/photos
+        for (const conv of convs) {
+          if (!conv.isGroup && conv.participants) {
+            const otherId = conv.participants.find((uid: string) => uid !== currentUser?.uid);
+            if (otherId && !userCache[otherId]) {
+               const userDoc = await getDoc(doc(db, "users", otherId));
+               if (userDoc.exists()) {
+                  const userData = userDoc.data();
+                  setUserCache(prev => ({ ...prev, [otherId]: { id: userDoc.id, ...userData } as UserProfile }));
+               }
+            }
+          }
+        }
+      },
+      (error) => {
+        if (error.code === 'failed-precondition') {
+          console.warn("Missing index for conversations. Retrying with client-side sort.");
+          // Fallback query without orderBy
+          const fallbackQ = query(
+            collection(db, "conversations"),
+            where("participants", "array-contains", currentUser.uid)
+          );
+          onSnapshot(fallbackQ, (snapshot) => {
+            const convs = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Conversation));
+            // Sort client-side
+            const sorted = convs.sort((a, b) => {
+              const dateA = a.updatedAt?.toDate?.() || 0;
+              const dateB = b.updatedAt?.toDate?.() || 0;
+              return dateB - dateA;
+            });
+            setConversations(sorted);
+          });
+        } else {
+          console.error("Conversations listener error:", error);
+        }
+      }
+    );
     return () => unsubscribe();
-  }, []);
+  }, [currentUser, userCache]);
 
   const handleGlobalSearch = async () => {
     if (!searchQuery.trim()) return;
-    
     setLoading(true);
     try {
-      // Search across all conversations
       const allResults: any[] = [];
-      
       for (const conv of conversations) {
-        // Get all messages in this conversation
         const messagesRef = collection(db, "conversations", conv.id, "messages");
         const messagesSnapshot = await getDocs(messagesRef);
-        
-        // Search in message content
         const matchingMessages = messagesSnapshot.docs
-          .map(doc => doc.data())
-          .filter(msg => msg.message?.toLowerCase().includes(searchQuery.toLowerCase()));
-        
+          .map((doc) => doc.data())
+          .filter((msg) => msg.message?.toLowerCase().includes(searchQuery.toLowerCase()));
         if (matchingMessages.length > 0) {
           allResults.push({
             conversationId: conv.id,
             conversationName: conv.name || "Unknown",
             message: matchingMessages[0]?.message,
             timestamp: matchingMessages[0]?.createdAt,
-            conversation: conv
+            conversation: conv,
           });
         }
       }
-      
       setSearchResults(allResults);
-      setLoading(false);
     } catch (error) {
       console.error("Search error:", error);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleSearchResultClick = (result: any) => {
-    // Navigate to the specific conversation and highlight the message
-    window.location.href = `/chat/${result.conversationId}`;
-  };
-
-  // Filter conversations based on search
-  const filteredConversations = showGlobalSearch && searchQuery.trim() 
-    ? conversations.filter(conv => 
-        searchResults.some(result => result.conversationId === conv.id)
-      ) 
-    : conversations;
+  const filteredConversations =
+    showGlobalSearch && searchQuery.trim()
+      ? conversations.filter((conv) =>
+          searchResults.some((result) => result.conversationId === conv.id)
+        )
+      : conversations;
 
   return (
-    <div className="flex flex-col min-h-screen bg-[#F5F5F5]">
-      <header className="flex items-center justify-between px-4 py-3 bg-white border-b border-[#E5E7EB]">
+    <div className="flex flex-col min-h-screen bg-[#F8FAFC]">
+      <header className="flex items-center justify-between px-6 py-4 bg-white border-b border-[#E2E8F0] sticky top-0 z-20">
         <div className="flex items-center gap-2">
-          <img src="/logo.svg" alt="TeamWave" className="w-8 h-8" />
-          <h1 className="text-xl font-bold text-[#2563EB]">TeamWave</h1>
+           <div className="w-8 h-8 bg-[#2563EB] rounded-lg flex items-center justify-center shadow-lg shadow-blue-500/20">
+             <span className="material-icons text-white text-sm">waves</span>
+           </div>
+           <h1 className="text-xl font-black text-gray-900 tracking-tight">TeamWave</h1>
         </div>
-        <div className="flex gap-2">
-          <button 
+        <div className="flex items-center gap-2">
+          <button
             onClick={() => setShowGlobalSearch(!showGlobalSearch)}
-            className="w-8 h-8 rounded-full bg-[#2563EB] text-white flex items-center justify-center font-bold text-lg"
-            title="Global Search"
+            className="w-10 h-10 rounded-2xl bg-blue-50 text-[#2563EB] flex items-center justify-center hover:bg-blue-100 transition-all hover:scale-105"
+            title="Search Messages"
           >
-            🔍
+            <span className="material-icons text-xl">search</span>
           </button>
-          <button 
-            onClick={() => window.location.href = '/groups'}
-            className="w-8 h-8 rounded-full bg-[#2563EB] text-white flex items-center justify-center font-bold text-lg"
-            title="Groups"
+          <button
+            onClick={() => router.push("/groups")}
+            className="w-10 h-10 rounded-2xl bg-blue-50 text-[#2563EB] flex items-center justify-center hover:bg-blue-100 transition-all hover:scale-105"
+            title="Communities"
           >
-            👥
+            <span className="material-icons text-xl">groups</span>
           </button>
-          <button 
-            onClick={() => window.location.href = '/admin'}
-            className="w-8 h-8 rounded-full bg-[#2563EB] text-white flex items-center justify-center font-bold text-lg"
-            title="Admin"
+          <a 
+            href="/profile" 
+            className="w-10 h-10 rounded-2xl bg-[#E5E7EB] overflow-hidden flex items-center justify-center border-2 border-white shadow-sm ml-1 hover:scale-105 transition-all"
           >
-            ⚙️
-          </button>
-          <button 
-            onClick={() => window.location.href = '/discover'}
-            className="w-8 h-8 rounded-full bg-[#2563EB] text-white flex items-center justify-center font-bold text-lg"
-            title="Discover"
-          >
-            +
-          </button>
+            {currentUser?.photoURL ? (
+              <img src={currentUser.photoURL} alt="Profile" className="w-full h-full object-cover" />
+            ) : (
+              <span className="material-icons text-gray-400">account_circle</span>
+            )}
+          </a>
         </div>
       </header>
-      <main className="flex-1 flex flex-col items-center px-4 py-8">
-        {/* Global Search Bar */}
+
+      <main className="flex-1 flex flex-col items-center px-4 py-8 pb-28 max-w-2xl mx-auto w-full">
         {showGlobalSearch && (
-          <div className="w-full max-w-md bg-white rounded-lg shadow p-4 mb-4">
-            <div className="relative">
-              <input
-                type="text"
-                placeholder="Search all conversations..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full p-2 pr-10 border border-[#E5E7EB] rounded"
-                autoFocus
-              />
-              {searchQuery && (
-                <button
-                  onClick={() => setSearchQuery("")}
-                  className="absolute right-2 top-2 text-gray-400 hover:text-gray-600"
-                  title="Clear search"
-                >
-                  ✕
-                </button>
-              )}
+          <div className="w-full bg-white rounded-3xl shadow-xl shadow-blue-500/5 p-6 mb-8 border border-blue-50 animate-in fade-in slide-in-from-top-4 duration-500">
+            <div className="relative flex gap-3">
+              <div className="relative flex-1">
+                <span className="material-icons absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">search</span>
+                <input
+                  type="text"
+                  placeholder="Find messages in any chat..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleGlobalSearch()}
+                  className="w-full pl-12 pr-4 py-4 bg-gray-50 border-none rounded-2xl focus:ring-4 focus:ring-blue-500/10 transition-all text-sm outline-none"
+                  autoFocus
+                />
+              </div>
+              <button
+                onClick={handleGlobalSearch}
+                className="px-6 py-4 bg-[#2563EB] text-white rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-blue-600 transition-all shadow-lg shadow-blue-500/30"
+              >
+                FIND
+              </button>
             </div>
-            
-            {/* Search Results */}
+
             {loading && (
-              <div className="text-center mt-4">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#2563EB]"></div>
+              <div className="flex justify-center mt-6">
+                <div className="animate-spin rounded-full h-8 w-8 border-4 border-[#2563EB] border-t-transparent"></div>
               </div>
             )}
-            
-            {searchResults.length > 0 && (
-              <div className="text-sm text-gray-600 mt-2">
-                Found {searchResults.length} result{searchResults.length !== 1 ? 's' : ''} across {conversations.length} conversation{conversations.length !== 1 ? 's' : ''}
+
+            {!loading && searchQuery && searchResults.length === 0 && (
+              <div className="text-xs font-bold text-gray-400 mt-6 text-center py-4 bg-gray-50 rounded-2xl uppercase tracking-widest">No matching results</div>
+            )}
+
+            {!loading && searchResults.length > 0 && (
+              <div className="text-[10px] font-black text-blue-500 mt-6 px-1 uppercase tracking-widest">
+                {searchResults.length} Match{searchResults.length !== 1 ? "es" : ""} found
               </div>
             )}
           </div>
         )}
-        {/* Regular Conversation List */}
-        {!showGlobalSearch && (
-          <div>
-            <h2 className="text-lg font-semibold text-[#2563EB] mb-2">Chat List</h2>
-            <div className="w-full max-w-md bg-white rounded shadow p-4">
-              {filteredConversations.length === 0 ? (
-                <div className="text-gray-400 text-center">No conversations yet.</div>
-              ) : (
-                filteredConversations.map(conv => (
+
+        <div className="w-full space-y-4">
+          <div className="flex justify-between items-center mb-6 px-2">
+            <h2 className="text-2xl font-black text-[#1E293B] tracking-tight">
+              {showGlobalSearch && searchQuery ? "Results" : "Messages"}
+            </h2>
+            {!showGlobalSearch && (
+              <button onClick={() => router.push("/discover")} className="text-xs font-black text-[#2563EB] bg-blue-50 px-4 py-2 rounded-xl hover:bg-blue-100 transition-colors uppercase tracking-widest">
+                Start +
+              </button>
+            )}
+          </div>
+          
+          <div className="space-y-3">
+            {filteredConversations.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20 px-8 text-center bg-white rounded-3xl border border-dashed border-gray-200">
+                <div className="w-20 h-20 bg-blue-50 rounded-[2.5rem] flex items-center justify-center mb-6">
+                  <span className="material-icons text-[#2563EB] text-4xl">chat_bubble_outline</span>
+                </div>
+                <h3 className="text-[#1E293B] font-black text-lg mb-2 uppercase tracking-tight">Silent Waves...</h3>
+                <p className="text-sm text-gray-400 font-medium max-w-[240px] leading-relaxed mb-8">
+                  {showGlobalSearch && searchQuery ? "Try searching for a different keyword or name." : "Start a conversation with your team members in the discovery tab."}
+                </p>
+                {!showGlobalSearch && (
+                  <button 
+                    onClick={() => router.push("/discover")}
+                    className="px-8 py-3 bg-[#1E293B] text-white rounded-2xl text-xs font-black uppercase tracking-widest hover:scale-105 transition-all shadow-xl shadow-gray-200"
+                  >
+                    DISCOVER TEAM
+                  </button>
+                )}
+              </div>
+            ) : (
+              filteredConversations.map((conv) => {
+                const otherUid = conv.isGroup ? null : conv.participants?.find((uid: string) => uid !== currentUser?.uid);
+                const chatName = conv.isGroup ? conv.name : (otherUid && userCache[otherUid] ? userCache[otherUid].name : (conv.name || "Private Chat"));
+                const chatPhoto = conv.isGroup ? null : (otherUid && userCache[otherUid] ? userCache[otherUid].profilePhoto : null);
+                
+                return (
                   <a
                     key={conv.id}
                     href={`/chat/${conv.id}`}
-                    className="flex items-center gap-4 py-2 border-b border-[#E5E7EB] last:border-b-0 hover:bg-gray-50"
+                    className="flex items-center gap-4 p-5 bg-white rounded-3xl border border-[#E2E8F0] hover:border-[#2563EB] transition-all group relative overflow-hidden shadow-sm hover:shadow-md active:scale-95"
                   >
-                    <div className="w-10 h-10 rounded-full bg-[#E5E7EB] mr-2" />
-                    <div className="flex-1">
-                      <div className="font-semibold text-black">{conv.name}</div>
-                      <div className="text-xs text-gray-500">{conv.lastMessage}</div>
+                    <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-50 to-blue-100 flex items-center justify-center flex-shrink-0 relative">
+                      {chatPhoto ? (
+                        <img src={chatPhoto} alt={chatName} className="w-full h-full rounded-2xl object-cover shadow-inner" />
+                      ) : (
+                        <span className="material-icons text-blue-300 text-3xl">{conv.isGroup ? 'groups' : 'person'}</span>
+                      )}
+                      {conv.isActive && <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 border-4 border-white rounded-full"></div>}
                     </div>
-                    <div className="text-xs opacity-70">
-                      {conv.participants?.length || 0} member{conv.participants?.length !== 1 ? 's' : ''} • {conv.updatedAt?.toDate?.().toLocaleString?.() || ""}
+                    
+                    <div className="flex-1 min-w-0">
+                      <div className="flex justify-between items-baseline mb-1">
+                        <div className="font-black text-[#1E293B] truncate pr-2 tracking-tight">{chatName}</div>
+                        <div className="text-[10px] font-black text-gray-300 flex-shrink-0 uppercase tracking-widest">
+                          {conv.updatedAt?.toDate?.()
+                            ? conv.updatedAt.toDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                            : ""}
+                        </div>
+                      </div>
+                      <div className="text-sm text-gray-400 truncate font-semibold">
+                        {conv.lastMessage || <span className="text-gray-200 italic font-medium">New match! Send a wave 👋</span>}
+                      </div>
                     </div>
+                    
+                    {conv.unread && <div className="w-2.5 h-2.5 bg-[#2563EB] rounded-full shadow-lg shadow-blue-500/50"></div>}
                   </a>
-                ))
-              )}
-            </div>
+                );
+              })
+            )}
           </div>
-        )}
+        </div>
       </main>
-      <nav className="fixed bottom-0 left-0 w-full bg-white border-t border-[#E5E7EB] flex justify-around py-2">
-        <a href="/home" className="flex flex-col items-center text-[#2563EB]">
+
+      <nav className="fixed bottom-0 left-0 w-full bg-white/80 backdrop-blur-xl border-t border-gray-100 flex justify-around py-4 z-20">
+        <a href="/home" className="flex flex-col items-center text-[#2563EB] px-6 py-1">
           <span className="material-icons">chat</span>
-          <span className="text-xs">Home</span>
+          <span className="text-[9px] font-black mt-1 tracking-widest">CHATS</span>
         </a>
-        <a href="/discover" className="flex flex-col items-center text-black">
+        <a href="/discover" className="flex flex-col items-center text-gray-300 hover:text-gray-500 px-6 py-1 transition-colors">
           <span className="material-icons">search</span>
-          <span className="text-xs">Discover</span>
+          <span className="text-[9px] font-black mt-1 tracking-widest">TEAM</span>
         </a>
-        <a href="/profile" className="flex flex-col items-center text-black">
+        <a href="/profile" className="flex flex-col items-center text-gray-300 hover:text-gray-500 px-6 py-1 transition-colors">
           <span className="material-icons">person</span>
-          <span className="text-xs">Profile</span>
+          <span className="text-[9px] font-black mt-1 tracking-widest">ME</span>
         </a>
       </nav>
     </div>
