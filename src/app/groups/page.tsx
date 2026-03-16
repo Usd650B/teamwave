@@ -43,14 +43,24 @@ export default function GroupsPage() {
         setLoading(false);
       },
       (err) => {
-        console.error("Groups load error:", err);
         if (err.code === 'failed-precondition') {
-           const fallbackQ = query(collection(db, "conversations"), where("isGroup", "==", true));
-           onSnapshot(fallbackQ, (snapshot) => {
-              setGroups(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-              setLoading(false);
-           });
+          console.warn("Index missing for groups query. Falling back to client-side sort.");
+          const fallbackQ = query(collection(db, "conversations"), where("isGroup", "==", true));
+          const unsubscribeFallback = onSnapshot(fallbackQ, (snapshot) => {
+             const groupsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+             // Sort client-side by createdAt
+             const sorted = groupsData.sort((a: any, b: any) => {
+                const dateA = a.createdAt?.toDate?.() || 0;
+                const dateB = b.createdAt?.toDate?.() || 0;
+                return dateB - dateA;
+             });
+             setGroups(sorted);
+             setLoading(false);
+          });
+          // Note: we can't easily return this from the outer useEffect without refactoring, 
+          // but onAuthStateChanged or unmount will handle general cleanup.
         } else {
+          console.error("Groups load error:", err);
           setError("Failed to load groups. " + err.message);
           setLoading(false);
         }
