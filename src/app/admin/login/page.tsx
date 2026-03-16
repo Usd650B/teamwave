@@ -20,17 +20,62 @@ export default function AdminLogin() {
     // Specific Admin Credentials Enforcement
     const REQUIRED_ADMIN_EMAIL = "Admin@brainwave.com";
     
-    if (email.toLowerCase() !== REQUIRED_ADMIN_EMAIL.toLowerCase()) {
+    if (email.trim().toLowerCase() !== REQUIRED_ADMIN_EMAIL.toLowerCase()) {
       setError("Unauthorized access. This terminal is for root administrators only.");
       setLoading(false);
       return;
     }
 
     try {
-      await signInWithEmailAndPassword(auth, email, password);
-      router.push("/admin");
+      // 1. Try to sign in
+      try {
+        await signInWithEmailAndPassword(auth, email, password);
+        console.log("Admin: Signed in successfully.");
+        router.push("/admin");
+      } catch (signInErr: any) {
+        // 2. If user doesn't exist, try to create it (Auto-Initialize)
+        // Note: auth/invalid-credential is often returned instead of auth/user-not-found
+        // so we check if the email matches our root requirement and try to create it just in case.
+        if (signInErr.code === "auth/user-not-found" || signInErr.code === "auth/invalid-credential") {
+          console.log("Admin: Account not found or rejected. Attempting to provision root account...");
+          try {
+            const { createUserWithEmailAndPassword } = await import("firebase/auth");
+            await createUserWithEmailAndPassword(auth, email, password);
+            
+            // Also create the user document in Firestore to ensure dashboard works
+            try {
+              const { doc, setDoc, serverTimestamp } = await import("firebase/firestore");
+              const { db } = await import("@/lib/firebase/firebase");
+              await setDoc(doc(db, "users", auth.currentUser?.uid || ""), {
+                id: auth.currentUser?.uid,
+                name: "System Admin",
+                email: email.toLowerCase(),
+                isAdmin: true,
+                isActive: true,
+                isVerified: true,
+                createdAt: serverTimestamp()
+              }, { merge: true });
+            } catch (fsErr) {
+              console.error("Failed to provision admin document:", fsErr);
+            }
+
+            console.log("Admin: Root account provisioned successfully.");
+            router.push("/admin");
+          } catch (createErr: any) {
+            console.error("Admin: Provisioning failed", createErr);
+            throw createErr; // Pass to outer catch
+          }
+        } else {
+          throw signInErr; // Pass to outer catch
+        }
+      }
     } catch (err: any) {
-      setError("Access Denied: Terminal credentials rejected.");
+      console.error("Admin Login Terminal Error:", err);
+      if (err.code === "auth/weak-password") {
+        setError("Security Error: Password does not meet minimum complexity.");
+      } else {
+        setError("Access Denied: Terminal credentials rejected.");
+      }
       setLoading(false);
     }
   };
