@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { db, auth } from "@/lib/firebase/firebase";
-import { collection, query, where, onSnapshot, orderBy, getDocs, doc, getDoc } from "firebase/firestore";
+import { collection, query, where, onSnapshot, orderBy, getDocs, doc, getDoc, deleteDoc } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 
 interface Conversation {
@@ -110,6 +110,17 @@ export default function ChatList() {
     );
     return () => unsubscribe();
   }, [currentUser, userCache]);
+
+  const deleteChat = async (e: React.MouseEvent, chatId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!confirm("Remove this conversation?")) return;
+    try {
+      await deleteDoc(doc(db, "conversations", chatId));
+    } catch (err) {
+      console.error("Delete failed:", err);
+    }
+  };
 
   const handleGlobalSearch = async () => {
     if (!searchQuery.trim()) return;
@@ -329,7 +340,16 @@ export default function ChatList() {
                       </div>
                     </div>
                     
-                    {conv.unread && <div className="w-2.5 h-2.5 bg-[#2563EB] rounded-full shadow-lg shadow-blue-500/50"></div>}
+                    <div className="flex flex-col items-end gap-2">
+                       {conv.unread && <div className="w-2.5 h-2.5 bg-[#2563EB] rounded-full shadow-lg shadow-blue-500/50"></div>}
+                       <button 
+                         onClick={(e) => deleteChat(e, conv.id)}
+                         className="opacity-0 group-hover:opacity-100 p-2 text-gray-300 hover:text-red-500 transition-all active:scale-95"
+                         title="Delete Conversation"
+                       >
+                         <span className="material-icons text-sm">delete</span>
+                       </button>
+                    </div>
                   </a>
                 );
               })

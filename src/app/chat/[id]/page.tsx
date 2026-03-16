@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useRef } from "react";
 import { db, storage } from "@/lib/firebase/firebase";
-import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, doc, setDoc, updateDoc, getDoc } from "firebase/firestore";
+import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, doc, setDoc, updateDoc, getDoc, deleteDoc } from "firebase/firestore";
 import { auth } from "@/lib/firebase/firebase";
 import { useParams, useRouter } from "next/navigation";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
@@ -19,6 +19,9 @@ export default function ChatPage() {
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const [typingNames, setTypingNames] = useState<Record<string, string>>({});
   const [isTyping, setIsTyping] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<any>(null);
+  const [swipeOffset, setSwipeOffset] = useState<Record<string, number>>({});
+  const touchStartRef = useRef<number | null>(null);
   const [currentUser, setCurrentUser] = useState(auth.currentUser);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -149,7 +152,7 @@ export default function ChatPage() {
       }
 
       const messageContent = input.trim();
-      const messageData = {
+      const messageData: any = {
         senderId: user.uid,
         senderName: user.displayName || "Unknown",
         message: messageContent,
@@ -161,6 +164,14 @@ export default function ChatPage() {
         seen: false
       };
 
+      if (replyingTo) {
+        messageData.replyTo = {
+          id: replyingTo.id,
+          message: replyingTo.message,
+          senderName: replyingTo.senderName
+        };
+      }
+
       await addDoc(collection(db, "conversations", chatId, "messages"), messageData);
       
       const convRef = doc(db, "conversations", chatId);
@@ -171,6 +182,7 @@ export default function ChatPage() {
 
       setInput("");
       setFile(null);
+      setReplyingTo(null);
       setShowEmoji(false);
     } catch (error) {
       console.error("Error sending message:", error);
@@ -215,6 +227,54 @@ export default function ChatPage() {
     return 'insert_drive_file';
   };
 
+  const deleteMessage = async (msgId: string) => {
+    if (!confirm("Remove this message for everyone?")) return;
+    try {
+      await deleteDoc(doc(db, "conversations", chatId, "messages", msgId));
+    } catch (err) {
+      console.error("Delete failed:", err);
+    }
+  };
+
+  const deleteChat = async () => {
+    if (!confirm("Permanently delete this entire conversation and all messages?")) return;
+    try {
+      await deleteDoc(doc(db, "conversations", chatId));
+      router.replace("/home");
+    } catch (err) {
+      console.error("Chat deletion failed:", err);
+    }
+  };
+
+  const handleSwipe = (msg: any, offset: number) => {
+    if (offset > 60) {
+      setReplyingTo(msg);
+      // Haptic feedback if possible
+      try { window.navigator.vibrate(10); } catch {}
+    }
+  };
+
+  const onTouchStart = (e: React.TouchEvent) => {
+    touchStartRef.current = e.targetTouches[0].clientX;
+  };
+
+  const onTouchMove = (msgId: string, e: React.TouchEvent) => {
+    if (touchStartRef.current !== null) {
+      const currentX = e.targetTouches[0].clientX;
+      const diff = currentX - touchStartRef.current;
+      if (diff > 0 && diff < 100) {
+        setSwipeOffset(prev => ({ ...prev, [msgId]: diff }));
+      }
+    }
+  };
+
+  const onTouchEnd = (msg: any, e: React.TouchEvent) => {
+    const finalOffset = swipeOffset[msg.id] || 0;
+    handleSwipe(msg, finalOffset);
+    setSwipeOffset(prev => ({ ...prev, [msg.id]: 0 }));
+    touchStartRef.current = null;
+  };
+
   return (
     <div className="flex flex-col h-screen bg-[#F0F2F5]">
       <header className="flex items-center justify-between px-4 py-3 bg-white border-b border-[#E5E7EB] shadow-sm z-10">
@@ -235,9 +295,14 @@ export default function ChatPage() {
             </div>
           </div>
         </div>
-        <button onClick={toggleTheme} className="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center transition-colors">
-          <span className="material-icons text-gray-500">{theme === "light" ? "dark_mode" : "light_mode"}</span>
-        </button>
+        <div className="flex items-center gap-1">
+          <button onClick={toggleTheme} className="w-9 h-9 rounded-xl hover:bg-gray-100 flex items-center justify-center transition-all">
+            <span className="material-icons text-gray-500 text-xl">{theme === "light" ? "dark_mode" : "light_mode"}</span>
+          </button>
+          <button onClick={deleteChat} className="w-9 h-9 rounded-xl hover:bg-red-50 flex items-center justify-center transition-all text-gray-400 hover:text-red-500">
+            <span className="material-icons text-xl">delete_sweep</span>
+          </button>
+        </div>
       </header>
 
       <main className="flex-1 overflow-y-auto px-4 py-6 space-y-3">
@@ -246,32 +311,80 @@ export default function ChatPage() {
           const showSender = !isOwn && (!messages[idx-1] || messages[idx-1].senderId !== msg.senderId);
           
           return (
-            <div key={msg.id || idx} className={`flex flex-col ${isOwn ? "items-end" : "items-start"}`}>
-              {showSender && <span className="text-[10px] font-bold text-gray-400 ml-2 mb-1 uppercase tracking-wider">{msg.senderName}</span>}
+            <div 
+              key={msg.id || idx} 
+              className={`flex flex-col ${isOwn ? "items-end" : "items-start"} group relative mb-2`}
+              onTouchStart={onTouchStart}
+              onTouchMove={(e) => onTouchMove(msg.id, e)}
+              onTouchEnd={(e) => onTouchEnd(msg, e)}
+            >
+              {showSender && <span className="text-[10px] font-black text-gray-400 ml-2 mb-1 uppercase tracking-widest">{msg.senderName}</span>}
               
-              <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 shadow-sm text-sm ${
-                isOwn ? "bg-[#2563EB] text-white rounded-tr-none" : "bg-white text-gray-800 rounded-tl-none border border-gray-100"
-              }`}>
-                {msg.fileUrl && (
-                  <div className="mb-2">
-                    {msg.fileType.startsWith("image") ? (
-                      <img src={msg.fileUrl} alt="attachment" className="rounded-lg max-h-60 object-cover border border-black/5 cursor-pointer hover:opacity-95 transition-opacity" onClick={() => window.open(msg.fileUrl, '_blank')} />
-                    ) : (
-                      <a href={msg.fileUrl} target="_blank" rel="noreferrer" className="flex items-center gap-3 p-2 bg-black/5 rounded-lg hover:bg-black/10 transition-colors">
-                        <span className="material-icons text-blue-500">{getFileIcon(msg.fileType)}</span>
-                        <div className="flex-1 min-w-0">
-                          <div className="text-xs font-bold truncate">{msg.fileName}</div>
-                          <div className="text-[10px] opacity-60 uppercase">{formatFileSize(msg.fileSize)}</div>
-                        </div>
-                        <span className="material-icons text-gray-400 text-sm">download</span>
-                      </a>
-                    )}
-                  </div>
-                )}
-                <div className="leading-relaxed whitespace-pre-wrap break-words">{msg.message}</div>
-                <div className={`text-[9px] mt-1 text-right ${isOwn ? "text-blue-100" : "text-gray-400"} font-bold`}>
-                  {msg.createdAt?.toDate?.() ? new Date(msg.createdAt.toDate()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "..."}
+              <div 
+                className="flex items-center gap-2 max-w-[85%] transition-transform duration-100"
+                style={{ transform: `translateX(${swipeOffset[msg.id] || 0}px)` }}
+              >
+                {/* Swipe Indicator */}
+                <div 
+                  className="absolute -left-10 opacity-0 transition-opacity"
+                  style={{ opacity: (swipeOffset[msg.id] || 0) / 60 }}
+                >
+                   <span className="material-icons text-blue-500">reply</span>
                 </div>
+                {isOwn && (
+                  <button 
+                    onClick={() => deleteMessage(msg.id)}
+                    className="opacity-0 group-hover:opacity-100 p-2 text-gray-300 hover:text-red-500 transition-all active:scale-90"
+                    title="Delete Message"
+                  >
+                    <span className="material-icons text-sm">delete</span>
+                  </button>
+                )}
+                
+                <div 
+                  className={`relative rounded-2xl px-4 py-2.5 shadow-sm text-sm transition-all cursor-pointer select-none ${
+                    isOwn ? "bg-[#2563EB] text-white rounded-tr-none" : "bg-white text-gray-800 rounded-tl-none border border-gray-100"
+                  }`}
+                  onDoubleClick={() => setReplyingTo(msg)}
+                >
+                  {/* Reply Reference */}
+                  {msg.replyTo && (
+                    <div className={`mb-2 p-2 rounded-lg text-[10px] border-l-4 ${isOwn ? "bg-blue-600/50 border-blue-300 text-blue-100" : "bg-gray-50 border-blue-500 text-gray-500"}`}>
+                        <div className="font-black uppercase mb-0.5">{msg.replyTo.senderName}</div>
+                        <div className="truncate">{msg.replyTo.message}</div>
+                    </div>
+                  )}
+
+                  {msg.fileUrl && (
+                    <div className="mb-2">
+                      {msg.fileType.startsWith("image") ? (
+                        <img src={msg.fileUrl} alt="attachment" className="rounded-lg max-h-60 object-cover border border-black/5 shadow-inner" onClick={() => window.open(msg.fileUrl, '_blank')} />
+                      ) : (
+                        <a href={msg.fileUrl} target="_blank" rel="noreferrer" className="flex items-center gap-3 p-2 bg-black/5 rounded-lg hover:bg-black/10 transition-colors">
+                          <span className="material-icons text-blue-500">{getFileIcon(msg.fileType)}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs font-bold truncate">{msg.fileName}</div>
+                            <div className="text-[10px] opacity-60 uppercase font-black">{formatFileSize(msg.fileSize)}</div>
+                          </div>
+                        </a>
+                      )}
+                    </div>
+                  )}
+                  <div className="leading-relaxed whitespace-pre-wrap break-words">{msg.message}</div>
+                  <div className={`text-[9px] mt-1 text-right ${isOwn ? "text-blue-100/70" : "text-gray-400"} font-black`}>
+                    {msg.createdAt?.toDate?.() ? new Date(msg.createdAt.toDate()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "..."}
+                  </div>
+                </div>
+
+                {!isOwn && (
+                   <button 
+                    onClick={() => setReplyingTo(msg)}
+                    className="opacity-0 group-hover:opacity-100 p-2 text-gray-300 hover:text-blue-500 transition-all active:scale-90"
+                    title="Reply"
+                  >
+                    <span className="material-icons text-sm">reply</span>
+                  </button>
+                )}
               </div>
             </div>
           );
@@ -293,16 +406,34 @@ export default function ChatPage() {
       </main>
 
       <footer className="bg-white border-t border-[#E5E7EB] px-4 py-3 pb-safe-bottom">
-        <form className="flex items-end gap-2" onSubmit={handleSend}>
-          <div className="flex items-center gap-1 mb-1">
-            <label className="cursor-pointer p-1.5 rounded-full hover:bg-gray-100 transition-colors text-gray-500">
-              <span className="material-icons shadow-sm">attach_file</span>
-              <input type="file" className="hidden" onChange={(e) => setFile(e.target.files?.[0] || null)} />
-            </label>
-            <button type="button" onClick={() => setShowEmoji(!showEmoji)} className="p-1.5 rounded-full hover:bg-gray-100 transition-colors text-gray-500">
-              <span className="material-icons text-xl">sentiment_satisfied_alt</span>
-            </button>
-          </div>
+        <form className="flex flex-col gap-2 relative" onSubmit={handleSend}>
+          {/* Reply Preview */}
+          {replyingTo && (
+            <div className="flex items-center justify-between p-3 bg-blue-50 border-l-4 border-blue-500 rounded-xl mb-1 animate-in slide-in-from-bottom-2">
+              <div className="flex-1 min-w-0 pr-4">
+                 <div className="text-[10px] font-black text-blue-600 uppercase tracking-widest">{replyingTo.senderName}</div>
+                 <div className="text-xs text-gray-600 truncate">{replyingTo.message}</div>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => setReplyingTo(null)}
+                className="w-6 h-6 rounded-full bg-white flex items-center justify-center text-gray-400 hover:text-red-500 shadow-sm transition-all"
+              >
+                <span className="material-icons text-sm">close</span>
+              </button>
+            </div>
+          )}
+
+          <div className="flex items-end gap-2">
+            <div className="flex items-center gap-1 mb-1">
+              <label className="cursor-pointer w-9 h-9 rounded-xl hover:bg-gray-100 flex items-center justify-center transition-colors text-gray-400">
+                <span className="material-icons text-xl">attach_file</span>
+                <input type="file" className="hidden" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+              </label>
+              <button type="button" onClick={() => setShowEmoji(!showEmoji)} className="w-9 h-9 rounded-xl hover:bg-gray-100 flex items-center justify-center transition-colors text-gray-400">
+                <span className="material-icons text-xl">sentiment_satisfied_alt</span>
+              </button>
+            </div>
           
           <div className="flex-1 relative">
             {file && (
@@ -332,6 +463,7 @@ export default function ChatPage() {
           >
             <span className="material-icons">send</span>
           </button>
+          </div>
         </form>
         
         {showEmoji && (
