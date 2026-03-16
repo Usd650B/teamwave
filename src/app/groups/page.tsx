@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { db, auth } from "@/lib/firebase/firebase";
-import { collection, query, where, onSnapshot, orderBy, doc, updateDoc, arrayUnion } from "firebase/firestore";
+import { collection, query, where, onSnapshot, orderBy, doc, updateDoc, arrayUnion, getDoc } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 
 export default function GroupsPage() {
@@ -26,48 +26,73 @@ export default function GroupsPage() {
   useEffect(() => {
     if (!currentUser) return;
 
-    const q = query(
-      collection(db, "conversations"),
-      where("isGroup", "==", true),
-      orderBy("createdAt", "desc")
-    );
+    const fetchGroups = async () => {
+      // Get current user's company info first
+      const userDoc = await getDoc(doc(db, "users", currentUser.uid));
+      if (userDoc.exists()) {
+        const uData = userDoc.data();
+        const companyId = uData.companyId || "";
 
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const groupsData = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
-        setGroups(groupsData);
-        setLoading(false);
-      },
-      (err) => {
-        if (err.code === 'failed-precondition') {
-          console.warn("Index missing for groups query. Falling back to client-side sort.");
-          const fallbackQ = query(collection(db, "conversations"), where("isGroup", "==", true));
-          const unsubscribeFallback = onSnapshot(fallbackQ, (snapshot) => {
-             const groupsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-             // Sort client-side by createdAt
-             const sorted = groupsData.sort((a: any, b: any) => {
-                const dateA = a.createdAt?.toDate?.() || 0;
-                const dateB = b.createdAt?.toDate?.() || 0;
-                return dateB - dateA;
-             });
-             setGroups(sorted);
-             setLoading(false);
-          });
-          // Note: we can't easily return this from the outer useEffect without refactoring, 
-          // but onAuthStateChanged or unmount will handle general cleanup.
-        } else {
-          console.error("Groups load error:", err);
-          setError("Failed to load groups. " + err.message);
-          setLoading(false);
-        }
+        const q = companyId 
+          ? query(
+              collection(db, "conversations"),
+              where("isGroup", "==", true),
+              where("companyId", "==", companyId),
+              orderBy("createdAt", "desc")
+            )
+          : query(
+              collection(db, "conversations"),
+              where("isGroup", "==", true),
+              orderBy("createdAt", "desc")
+            );
+
+        const unsubscribe = onSnapshot(
+          q,
+          (snapshot) => {
+            const groupsData = snapshot.docs.map((doc) => ({
+              id: doc.id,
+              ...doc.data(),
+            }));
+            setGroups(groupsData);
+            setLoading(false);
+          },
+          (err) => {
+            if (err.code === 'failed-precondition') {
+              console.warn("Index missing for groups query. Falling back to client-side sort + company filter.");
+              const fallbackQ = companyId 
+                ? query(collection(db, "conversations"), where("isGroup", "==", true), where("companyId", "==", companyId))
+                : query(collection(db, "conversations"), where("isGroup", "==", true));
+              
+              onSnapshot(fallbackQ, (snapshot) => {
+                const groupsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                const sorted = groupsData.sort((a: any, b: any) => {
+                  const dateA = a.createdAt?.toDate?.() || 0;
+                  const dateB = b.createdAt?.toDate?.() || 0;
+                  return dateB - dateA;
+                });
+                setGroups(sorted);
+                setLoading(false);
+              });
+            } else {
+              console.error("Groups load error:", err);
+              setError("Failed to load groups. " + err.message);
+              setLoading(false);
+            }
+          }
+        );
+
+        return unsubscribe;
       }
-    );
+    };
 
-    return () => unsubscribe();
+    let unsubscribe: any;
+    fetchGroups().then(unsub => {
+      unsubscribe = unsub;
+    });
+
+    return () => {
+       if (unsubscribe) unsubscribe();
+    };
   }, [currentUser]);
 
   const handleJoinGroup = async (groupId: string) => {

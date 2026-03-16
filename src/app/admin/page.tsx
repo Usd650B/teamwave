@@ -13,6 +13,7 @@ interface User {
   jobTitle?: string;
   isActive?: boolean;
   isVerified?: boolean;
+  companyName?: string;
   role?: string;
   createdAt: any;
 }
@@ -158,6 +159,7 @@ export default function AdminDashboard() {
                   <tr>
                     <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Team Member</th>
                     <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Verification Status</th>
+                    <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Organization</th>
                     <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Network Access</th>
                     <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] text-right">Actions</th>
                   </tr>
@@ -193,6 +195,9 @@ export default function AdminDashboard() {
                           <span className="material-icons text-xs">{user.isVerified ? 'check_circle' : 'pending'}</span>
                           {user.isVerified ? 'Verified' : 'Unverified'}
                         </button>
+                      </td>
+                      <td className="px-8 py-6">
+                        <div className="text-[10px] font-black text-gray-900 uppercase tracking-widest">{user.companyName || "N/A"}</div>
                       </td>
                       <td className="px-8 py-6">
                         <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border text-[9px] font-black uppercase tracking-widest ${

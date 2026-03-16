@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { db, auth } from "@/lib/firebase/firebase";
-import { collection, addDoc, serverTimestamp, doc, arrayUnion, updateDoc, getDocs } from "firebase/firestore";
+import { collection, addDoc, serverTimestamp, doc, arrayUnion, updateDoc, getDocs, getDoc, query, where } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 
 export default function CreateGroupPage() {
@@ -11,6 +11,7 @@ export default function CreateGroupPage() {
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const [userData, setUserData] = useState<any>(null);
   const [error, setError] = useState("");
   const [currentUser, setCurrentUser] = useState(auth.currentUser);
   const router = useRouter();
@@ -26,16 +27,28 @@ export default function CreateGroupPage() {
   }, [router]);
 
   useEffect(() => {
-    const fetchUsers = async () => {
+    if (!currentUser) return;
+    const fetchCurrentAndAllUsers = async () => {
       try {
-        const snapshot = await getDocs(collection(db, "users"));
-        setAllUsers(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
+        const uDoc = await getDoc(doc(db, "users", currentUser.uid));
+        if (uDoc.exists()) {
+          const uData = uDoc.data();
+          setUserData(uData);
+          const cId = uData.companyId || "";
+          
+          const q = cId 
+            ? query(collection(db, "users"), where("companyId", "==", cId))
+            : query(collection(db, "users"));
+
+          const snapshot = await getDocs(q);
+          setAllUsers(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
+        }
       } catch (err) {
         console.error("Error fetching users:", err);
       }
     };
-    fetchUsers();
-  }, []);
+    fetchCurrentAndAllUsers();
+  }, [currentUser]);
 
   const toggleMember = (userId: string) => {
     setSelectedMembers((prev) =>
@@ -59,6 +72,7 @@ export default function CreateGroupPage() {
       const convRef = await addDoc(collection(db, "conversations"), {
         name: groupName.trim(),
         createdBy: currentUser.uid,
+        companyId: userData?.companyId || "",
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         participants: allParticipants,

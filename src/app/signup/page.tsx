@@ -11,6 +11,7 @@ export default function Signup() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [companyName, setCompanyName] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
@@ -45,10 +46,15 @@ export default function Signup() {
     try {
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       await updateProfile(userCredential.user, { displayName: name });
+      
+      const sanitizedCompany = companyName.trim().toLowerCase();
+      
       await setDoc(doc(db, "users", userCredential.user.uid), {
         id: userCredential.user.uid,
         name: name.trim(),
         email,
+        companyName: companyName.trim(),
+        companyId: sanitizedCompany,
         profilePhoto: "",
         jobTitle: "New Team Member",
         createdAt: serverTimestamp(),
@@ -116,6 +122,21 @@ export default function Signup() {
                       required
                       className="w-full bg-gray-50 border border-[#E2E8F0] rounded-2xl pl-11 pr-4 py-4 text-sm font-bold focus:bg-white focus:ring-4 focus:ring-blue-500/5 focus:border-[#2563EB] outline-none transition-all"
                       placeholder="name@company.com"
+                    />
+                  </div>
+               </div>
+
+               <div className="group">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 mb-1.5 block group-focus-within:text-[#2563EB] transition-colors">Organization Domain / Name</label>
+                  <div className="relative">
+                    <span className="material-icons absolute left-4 top-1/2 -translate-y-1/2 text-gray-300 text-sm">business</span>
+                    <input
+                      type="text"
+                      value={companyName}
+                      onChange={(e) => setCompanyName(e.target.value)}
+                      required
+                      className="w-full bg-gray-50 border border-[#E2E8F0] rounded-2xl pl-11 pr-4 py-4 text-sm font-bold focus:bg-white focus:ring-4 focus:ring-blue-500/5 focus:border-[#2563EB] outline-none transition-all"
+                      placeholder="e.g. Acme Corp"
                     />
                   </div>
                </div>

@@ -11,7 +11,9 @@ export default function ProfilePage() {
   const [isEditing, setIsEditing] = useState(false);
   const [name, setName] = useState("");
   const [jobTitle, setJobTitle] = useState("");
+  const [companyName, setCompanyName] = useState("");
   const [profilePhoto, setProfilePhoto] = useState("");
+  const [isVerified, setIsVerified] = useState(false);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [user, setUser] = useState(auth.currentUser);
@@ -36,7 +38,9 @@ export default function ProfilePage() {
           const userData = userDoc.data();
           setName(userData.name || user.displayName || "");
           setJobTitle(userData.jobTitle || "");
+          setCompanyName(userData.companyName || "Independent");
           setProfilePhoto(userData.profilePhoto || user.photoURL || "");
+          setIsVerified(!!userData.isVerified);
         } else {
           setName(user.displayName || "");
           setProfilePhoto(user.photoURL || "");
@@ -185,12 +189,19 @@ export default function ProfilePage() {
           <div className="w-full space-y-10">
             <div className="text-center">
               <h2 className="text-3xl font-black text-[#1E293B] mb-1">{name || "Mysterious Colleague"}</h2>
-              <p className="text-[#2563EB] font-black text-xs uppercase tracking-widest mb-4">
+              <p className="text-[#2563EB] font-black text-xs uppercase tracking-widest mb-1">
                 {jobTitle || "Team Member"}
+              </p>
+              <p className="text-gray-400 font-bold text-[10px] uppercase tracking-[0.2em] mb-4">
+                {companyName}
               </p>
               <div className="flex items-center justify-center gap-2">
                  <span className="bg-green-100 text-green-700 text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-tighter">Available Now</span>
-                 <span className="bg-blue-50 text-[#2563EB] text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-tighter">Verified</span>
+                 {isVerified && (
+                   <span className="bg-blue-50 text-[#2563EB] text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-tighter flex items-center gap-1">
+                     <span className="material-icons text-[12px]">verified</span> Verified
+                   </span>
+                 )}
               </div>
             </div>
 

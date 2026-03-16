@@ -38,28 +38,45 @@ export default function DiscoverPage() {
   useEffect(() => {
     if (!currentUser) return;
 
-    // Listen to following list
-    const followingRef = doc(db, "following", currentUser.uid);
-    const unsubscribeFollowing = onSnapshot(followingRef, (docSnap) => {
-      if (docSnap.exists()) {
-        setFollowing(docSnap.data().list || []);
+    // First fetch current user's company info
+    const fetchCurrentUserInfo = async () => {
+      const userDoc = await getDoc(doc(db, "users", currentUser.uid));
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        const companyId = userData.companyId || "";
+
+        // Listen to following list
+        const followingRef = doc(db, "following", currentUser.uid);
+        const unsubscribeFollowing = onSnapshot(followingRef, (docSnap) => {
+          if (docSnap.exists()) {
+            setFollowing(docSnap.data().list || []);
+          }
+        });
+
+        // Fetch users from the same company
+        const usersRef = collection(db, "users");
+        // For old users without companyId, we show them all or handle specifically.
+        // User's request: "dont show Admin part allow me see all users"... actually they said "Company A team not see Company B"
+        const qUsers = companyId 
+          ? query(usersRef, where("companyId", "==", companyId))
+          : query(usersRef); // Fallback for legacy data
+
+        const unsubscribeUsers = onSnapshot(qUsers, (snapshot) => {
+          const usersData = snapshot.docs.map((doc) => ({
+            id: doc.id,
+            ...doc.data(),
+          }));
+          setEmployees(usersData);
+        });
+
+        return () => {
+          unsubscribeFollowing();
+          unsubscribeUsers();
+        };
       }
-    });
-
-    // Fetch all users
-    const usersRef = collection(db, "users");
-    const unsubscribeUsers = onSnapshot(usersRef, (snapshot) => {
-      const usersData = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
-      setEmployees(usersData);
-    });
-
-    return () => {
-      unsubscribeFollowing();
-      unsubscribeUsers();
     };
+
+    fetchCurrentUserInfo();
   }, [currentUser]);
 
   const handleFollow = async (empId: string) => {
@@ -200,7 +217,12 @@ export default function DiscoverPage() {
                   </div>
                   
                   <div className="flex-1 min-w-0">
-                    <div className="font-bold text-gray-900 truncate">{emp.name || "Unknown User"}</div>
+                    <div className="font-bold text-gray-900 truncate flex items-center gap-1">
+                      {emp.name || "Unknown User"}
+                      {emp.isVerified && (
+                        <span className="material-icons text-green-500 text-sm" title="Verified Member">verified</span>
+                      )}
+                    </div>
                     <div className="text-[10px] text-blue-500 font-black uppercase tracking-wider truncate mb-1">{emp.jobTitle || "Team Member"}</div>
                     <div className="flex items-center gap-1 text-[10px] text-gray-400 font-bold">
                       <span className="material-icons text-[10px]">location_on</span>
