@@ -65,12 +65,7 @@ export default function LandingPage() {
             </div>
           </div>
 
-          <div className="pt-20 grid grid-cols-2 md:grid-cols-4 gap-8 opacity-40 grayscale hover:grayscale-0 transition-all duration-500">
-             <div className="flex items-center gap-2 justify-center font-black text-xl italic text-gray-400">NEXT.JS</div>
-             <div className="flex items-center gap-2 justify-center font-black text-xl italic text-gray-400">FIREBASE</div>
-             <div className="flex items-center gap-2 justify-center font-black text-xl italic text-gray-400">TAILWIND</div>
-             <div className="flex items-center gap-2 justify-center font-black text-xl italic text-gray-400">REACT</div>
-          </div>
+          {/* Tech stack removed */}
         </section>
       </main>
 
