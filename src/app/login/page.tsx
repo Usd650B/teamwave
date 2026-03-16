@@ -52,9 +52,9 @@ export default function Login() {
           <div className="text-center space-y-6">
             <div 
               onClick={() => router.push("/")}
-              className="w-16 h-16 bg-[#2563EB] rounded-[1.5rem] flex items-center justify-center mx-auto shadow-2xl shadow-blue-500/30 cursor-pointer hover:rotate-6 transition-all"
+              className="w-16 h-16 bg-[#2563EB] rounded-[1.5rem] flex items-center justify-center mx-auto shadow-2xl shadow-blue-500/30 cursor-pointer hover:rotate-6 transition-all overflow-hidden p-3"
             >
-              <span className="material-icons text-white text-3xl">waves</span>
+              <img src="/logo.png" alt="TeamWave" className="w-full h-full object-contain" />
             </div>
             <div className="space-y-2">
               <h1 className="text-3xl font-black text-[#1E293B] tracking-tight">Welcome Back</h1>

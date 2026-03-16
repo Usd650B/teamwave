@@ -139,8 +139,8 @@ export default function ChatList() {
     <div className="flex flex-col min-h-screen bg-[#F8FAFC]">
       <header className="flex items-center justify-between px-6 py-4 bg-white border-b border-[#E2E8F0] sticky top-0 z-20">
         <div className="flex items-center gap-2">
-           <div className="w-8 h-8 bg-[#2563EB] rounded-lg flex items-center justify-center shadow-lg shadow-blue-500/20">
-             <span className="material-icons text-white text-sm">waves</span>
+           <div className="w-8 h-8 bg-[#2563EB] rounded-lg flex items-center justify-center shadow-lg shadow-blue-500/20 overflow-hidden">
+             <img src="/logo.png" alt="Logo" className="w-full h-full object-cover scale-110" />
            </div>
            <h1 className="text-xl font-black text-gray-900 tracking-tight">TeamWave</h1>
         </div>
