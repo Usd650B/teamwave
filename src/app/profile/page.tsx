@@ -107,7 +107,12 @@ export default function ProfilePage() {
   return (
     <div className="flex flex-col min-h-screen bg-[#F8FAFC]">
       <header className="flex items-center justify-between px-6 py-4 bg-white border-b border-[#E2E8F0] sticky top-0 z-20">
-        <h1 className="text-xl font-black text-gray-900 tracking-tight">Profile</h1>
+        <div className="flex items-center gap-3">
+          <button onClick={() => router.back()} className="text-gray-400 hover:text-[#2563EB] transition-colors">
+            <span className="material-icons">arrow_back</span>
+          </button>
+          <h1 className="text-xl font-black text-gray-900 tracking-tight">Profile</h1>
+        </div>
         <button
           onClick={() => {
             setIsEditing(!isEditing);

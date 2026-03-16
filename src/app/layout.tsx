@@ -23,13 +23,11 @@ export const metadata: Metadata = {
   },
   icons: {
     icon: [
-      { url: "/favicon.png" },
-      { url: "/favicon.png", sizes: "192x192", type: "image/png" },
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/logo.png", type: "image/png" },
     ],
-    shortcut: "/favicon.png",
     apple: [
-      { url: "/favicon.png" },
-      { url: "/favicon.png", sizes: "180x180", type: "image/png" },
+      { url: "/logo.png" },
     ],
   },
 };
@@ -53,6 +51,18 @@ export default function RootLayout({
         <ThemeProvider>
           {children}
         </ThemeProvider>
+        {/* PWA Service Worker Registration */}
+        <script dangerouslySetInnerHTML={{ __html: `
+          if ('serviceWorker' in navigator) {
+            window.addEventListener('load', function() {
+              navigator.serviceWorker.register('/sw.js').then(function(registration) {
+                console.log('SW registered: ', registration.scope);
+              }, function(err) {
+                console.log('SW registration failed: ', err);
+              });
+            });
+          }
+        `}} />
       </body>
     </html>
   );

@@ -145,6 +145,38 @@ export default function ChatList() {
            <h1 className="text-xl font-black text-gray-900 tracking-tight">TeamWave</h1>
         </div>
         <div className="flex items-center gap-2">
+          {/* PWA Installer Script for Home */}
+          <script dangerouslySetInnerHTML={{ __html: `
+            let homeDeferredPrompt;
+            window.addEventListener('beforeinstallprompt', (e) => {
+              e.preventDefault();
+              homeDeferredPrompt = e;
+              const btn = document.getElementById('home-install-btn');
+              if (btn) btn.classList.remove('hidden');
+            });
+            window.addEventListener('load', () => {
+              const btn = document.getElementById('home-install-btn');
+              if (btn) {
+                btn.addEventListener('click', async () => {
+                  if (homeDeferredPrompt) {
+                    homeDeferredPrompt.prompt();
+                    const { outcome } = await homeDeferredPrompt.userChoice;
+                    if (outcome === 'accepted') btn.classList.add('hidden');
+                    homeDeferredPrompt = null;
+                  } else {
+                    alert("To download: Tap the 'Share' icon (ios) or ⋮ (android) and 'Add to Home Screen'");
+                  }
+                });
+              }
+            });
+          `}} />
+          <button
+            id="home-install-btn"
+            className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-blue-50 text-[#2563EB] text-[10px] font-black rounded-lg hover:bg-blue-100 transition-all uppercase tracking-widest mr-2"
+          >
+            <span className="material-icons text-xs">download</span>
+            App
+          </button>
           <button
             onClick={() => setShowGlobalSearch(!showGlobalSearch)}
             className="w-10 h-10 rounded-2xl bg-blue-50 text-[#2563EB] flex items-center justify-center hover:bg-blue-100 transition-all hover:scale-105"

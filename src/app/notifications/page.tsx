@@ -46,7 +46,7 @@ export default function NotificationsPage() {
       if ("Notification" in window && Notification.permission === "granted") {
         new Notification("TeamWave", {
           body: "This is a test notification from TeamWave! 🎉",
-          icon: "/favicon.ico",
+          icon: "/logo.png",
           tag: "test-notification",
         });
         setSuccess("Test notification sent!");
@@ -72,8 +72,8 @@ export default function NotificationsPage() {
       <main className="flex-1 flex flex-col items-center px-4 py-12 pb-24 max-w-lg mx-auto w-full">
         <div className="w-full space-y-8">
           <div className="text-center space-y-2">
-            <div className="inline-block p-4 bg-blue-50 rounded-3xl mb-2">
-              <span className="material-icons text-[#2563EB] text-4xl">notifications_active</span>
+            <div className="inline-block p-1.5 bg-blue-50 rounded-3xl mb-2 w-16 h-16 overflow-hidden">
+              <img src="/logo.png" alt="Logo" className="w-full h-full object-cover scale-110" />
             </div>
             <h2 className="text-2xl font-black text-[#1E293B]">Stay Synced</h2>
             <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest leading-none">Notification Preferences</p>

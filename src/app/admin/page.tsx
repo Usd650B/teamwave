@@ -193,8 +193,8 @@ export default function AdminDashboard() {
     <div className="flex flex-col min-h-screen bg-[#F8FAFC]">
       <header className="bg-[#1E293B] text-white px-6 py-4 flex justify-between items-center shadow-lg">
         <div className="flex items-center gap-3">
-          <div className="bg-[#2563EB] p-2 rounded-lg">
-            <span className="material-icons">admin_panel_settings</span>
+          <div className="bg-[#2563EB] p-1.5 rounded-lg w-10 h-10 overflow-hidden">
+            <img src="/logo.png" alt="Logo" className="w-full h-full object-cover scale-110" />
           </div>
           <div>
             <h1 className="text-xl font-bold tracking-tight">Admin Terminal</h1>
