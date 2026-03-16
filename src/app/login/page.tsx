@@ -13,6 +13,14 @@ export default function Login() {
   const router = useRouter();
 
   useEffect(() => {
+    // Check for errors in URL
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('error') === 'account_disabled') {
+        setError("This account has been frozen by the administrator.");
+      }
+    }
+
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
         router.replace("/home");

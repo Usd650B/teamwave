@@ -22,6 +22,7 @@ interface UserProfile {
   name?: string;
   profilePhoto?: string;
   jobTitle?: string;
+  isVerified?: boolean;
 }
 
 export default function ChatList() {
@@ -34,12 +35,23 @@ export default function ChatList() {
   const [currentUser, setCurrentUser] = useState(auth.currentUser);
   const router = useRouter();
 
-  // Wait for auth state
+  // Wait for auth state + check active status
   useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
       if (!user) {
         router.replace("/login");
+        return;
+      }
+
+      // Check if user is active
+      const userDoc = await getDoc(doc(db, "users", user.uid));
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        if (userData.isActive === false) {
+          await auth.signOut();
+          router.replace("/login?error=account_disabled");
+        }
       }
     });
     return unsubscribeAuth;
@@ -300,7 +312,12 @@ export default function ChatList() {
                     
                     <div className="flex-1 min-w-0">
                       <div className="flex justify-between items-baseline mb-1">
-                        <div className="font-black text-[#1E293B] truncate pr-2 tracking-tight">{chatName}</div>
+                        <div className="font-black text-[#1E293B] truncate pr-2 tracking-tight flex items-center gap-1">
+                          {chatName}
+                          {otherUid && userCache[otherUid]?.isVerified && (
+                             <span className="material-icons text-green-500 text-sm" title="Verified Member">verified</span>
+                          )}
+                        </div>
                         <div className="text-[10px] font-black text-gray-300 flex-shrink-0 uppercase tracking-widest">
                           {conv.updatedAt?.toDate?.()
                             ? conv.updatedAt.toDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
