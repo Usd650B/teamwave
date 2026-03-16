@@ -16,9 +16,20 @@ export default function ChatPage() {
   const [showEmoji, setShowEmoji] = useState(false);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const [isTyping, setIsTyping] = useState(false);
+  const [currentUser, setCurrentUser] = useState(auth.currentUser);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const { chatId } = useParams();
+
+  // Monitor authentication state
+  useEffect(() => {
+    const unsubscribe = auth.onAuthStateChanged((user) => {
+      console.log("Auth state changed:", user);
+      setCurrentUser(user);
+    });
+    
+    return unsubscribe;
+  }, []);
 
   useEffect(() => {
     if (!chatId) return;
@@ -76,7 +87,7 @@ export default function ChatPage() {
     e.preventDefault();
     if (!input.trim() && !file) return;
 
-    const user = auth.currentUser;
+    const user = currentUser;
     if (!user || !chatId) {
       console.error("No user or chatId", { user, chatId });
       alert("Please log in and try again.");

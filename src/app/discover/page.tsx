@@ -2,13 +2,24 @@
 
 import React, { useEffect, useState } from "react";
 import { db } from "@/lib/firebase/firebase";
-import { collection, getDocs, doc, setDoc, deleteDoc, getDoc, query, where, addDoc, serverTimestamp } from "firebase/firestore";
+import { collection, getDocs, doc, setDoc, deleteDoc, getDoc, query, where, addDoc, serverTimestamp, onSnapshot } from "firebase/firestore";
 import { auth } from "@/lib/firebase/firebase";
 
 export default function EmployeeDirectory() {
   const [employees, setEmployees] = useState<any[]>([]);
   const [search, setSearch] = useState("");
   const [following, setFollowing] = useState<string[]>([]);
+  const [currentUser, setCurrentUser] = useState(auth.currentUser);
+
+  // Monitor authentication state
+  useEffect(() => {
+    const unsubscribe = auth.onAuthStateChanged((user) => {
+      console.log("Auth state changed in discover:", user);
+      setCurrentUser(user);
+    });
+    
+    return unsubscribe;
+  }, []);
 
   useEffect(() => {
     const fetchEmployees = async () => {
@@ -20,18 +31,41 @@ export default function EmployeeDirectory() {
 
   useEffect(() => {
     const fetchFollowing = async () => {
-      const user = auth.currentUser;
+      const user = currentUser;
       if (!user) return;
+      console.log("Fetching following for user:", user.uid);
       const followingDoc = await getDoc(doc(db, "following", user.uid));
       if (followingDoc.exists()) {
-        setFollowing(followingDoc.data().list || []);
+        const followingList = followingDoc.data().list || [];
+        console.log("Following list loaded:", followingList);
+        setFollowing(followingList);
       }
     };
     fetchFollowing();
-  }, []);
+  }, [currentUser]);
+
+  // Real-time listener for following changes
+  useEffect(() => {
+    const user = currentUser;
+    if (!user) return;
+
+    const followingRef = doc(db, "following", user.uid);
+    const unsubscribe = onSnapshot(followingRef, (doc) => {
+      if (doc.exists()) {
+        const followingList = doc.data().list || [];
+        console.log("Following list updated in real-time:", followingList);
+        setFollowing(followingList);
+      } else {
+        console.log("Following document deleted, clearing list");
+        setFollowing([]);
+      }
+    });
+
+    return unsubscribe;
+  }, [currentUser]);
 
   const handleFollow = async (empId: string) => {
-    const user = auth.currentUser;
+    const user = currentUser;
     if (!user) {
       console.error("=== NO AUTHENTICATED USER ===");
       alert("Please log in to follow users.");
@@ -95,7 +129,7 @@ export default function EmployeeDirectory() {
   };
 
   const handleUnfollow = async (empId: string) => {
-    const user = auth.currentUser;
+    const user = currentUser;
     if (!user) {
       console.error("=== NO AUTHENTICATED USER ===");
       alert("Please log in to unfollow users.");
