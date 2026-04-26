@@ -267,45 +267,82 @@ export default function AdminDashboard() {
   const visibleTabs = (isSupervisor && !isAdmin) ? tabs.filter(t => t.key === "schedule") : tabs;
 
   return (
-    <div className="flex flex-col min-h-screen bg-[#F8FAFC]">
-      <header className="bg-[#0F172A] border-b border-white/5 px-6 py-4 flex justify-between items-center sticky top-0 z-50 shadow-2xl">
-        <div className="flex items-center gap-4">
-          <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/40 p-2">
+    <div className="flex h-screen bg-[#F1F5F9] font-sans">
+      {/* Sidebar */}
+      <aside className="w-[280px] bg-white border-r border-[#E2E8F0] flex flex-col h-full z-20 flex-shrink-0">
+        <div className="p-6 border-b border-[#E2E8F0] flex items-center gap-3">
+          <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/20 p-2 shrink-0">
             <Image src="/logo.png" alt="Logo" width={40} height={40} className="w-full h-full object-contain" />
           </div>
           <div>
-            <h1 className="text-white font-black text-lg tracking-tighter flex items-center gap-2">
-              {isAdmin ? "ADMIN DASHBOARD" : "SUPERVISOR ACCESS"}
-              <span className="px-2 py-0.5 bg-blue-600 text-white text-[8px] font-black rounded-md uppercase tracking-widest">{isAdmin ? "Root" : "Supervisor"}</span>
+            <h1 className="text-[#0F172A] font-black text-lg tracking-tight leading-none flex items-center gap-2">
+              TeamWave
             </h1>
-            <p className="text-[10px] text-blue-400 font-bold uppercase tracking-widest">{auth.currentUser?.email || ADMIN_EMAIL}</p>
+            <p className="text-[10px] text-blue-500 font-bold uppercase tracking-widest mt-1">Management</p>
           </div>
         </div>
-        <button onClick={() => auth.signOut().then(() => router.push("/admin/login"))}
-          className="bg-white/5 hover:bg-red-500/10 border border-white/10 p-2.5 rounded-xl text-gray-400 hover:text-red-500 transition-all">
-          <span className="material-icons text-xl">power_settings_new</span>
-        </button>
-      </header>
 
-      {/* Tabs */}
-      <div className="bg-white border-b border-gray-100 px-6 flex gap-1 overflow-x-auto">
-        {visibleTabs.map(t => (
-          <button key={t.key} onClick={() => setActiveTab(t.key)}
-            className={`flex items-center gap-2 px-5 py-4 text-[10px] font-black uppercase tracking-widest transition-all border-b-2 whitespace-nowrap ${
-              activeTab === t.key ? "border-[#2563EB] text-[#2563EB]" : "border-transparent text-gray-400 hover:text-gray-600"
-            }`}>
-            <span className="material-icons text-sm">{t.icon}</span>
-            {t.label}
-            {(t.count ?? 0) > 0 && (
-              <span className={`px-1.5 py-0.5 rounded-md text-[8px] ${activeTab === t.key ? "bg-blue-50 text-blue-600" : "bg-gray-100 text-gray-500"}`}>
-                {t.count}
-              </span>
-            )}
+        <nav className="flex-1 p-4 space-y-1 overflow-y-auto custom-scrollbar">
+          <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4 px-3 mt-2">Modules</p>
+          {visibleTabs.map(t => (
+            <button key={t.key} onClick={() => setActiveTab(t.key)}
+              className={`w-full flex items-center justify-between px-3 py-3 rounded-xl text-sm font-bold transition-all ${
+                activeTab === t.key 
+                  ? "bg-blue-50 text-blue-700" 
+                  : "text-gray-500 hover:bg-gray-50 hover:text-gray-900"
+              }`}>
+              <div className="flex items-center gap-3">
+                <span className={`material-icons text-[18px] ${activeTab === t.key ? "text-blue-600" : "text-gray-400"}`}>
+                  {t.icon}
+                </span>
+                {t.label}
+              </div>
+              {(t.count ?? 0) > 0 && (
+                <span className={`px-2 py-0.5 rounded-lg text-[10px] ${
+                  activeTab === t.key ? "bg-blue-600 text-white" : "bg-gray-200 text-gray-600"
+                }`}>
+                  {t.count}
+                </span>
+              )}
+            </button>
+          ))}
+        </nav>
+
+        <div className="p-4 border-t border-[#E2E8F0] bg-gray-50/50">
+          <div className="flex items-center gap-3 mb-4 px-2">
+            <div className="w-8 h-8 rounded-full bg-[#0F172A] flex items-center justify-center text-white text-xs font-black shrink-0">
+              {isAdmin ? "AD" : "SU"}
+            </div>
+            <div className="min-w-0">
+              <p className="text-[10px] font-black uppercase tracking-widest text-[#0F172A]">{isAdmin ? "Root Admin" : "Supervisor"}</p>
+              <p className="text-xs text-gray-500 truncate">{auth.currentUser?.email || ADMIN_EMAIL}</p>
+            </div>
+          </div>
+          <button onClick={() => auth.signOut().then(() => router.push("/admin/login"))}
+            className="w-full flex items-center justify-center gap-2 py-2.5 text-sm font-bold text-red-600 bg-red-50 hover:bg-red-100 rounded-xl transition-all">
+            <span className="material-icons text-sm">logout</span>
+            Sign Out
           </button>
-        ))}
-      </div>
+        </div>
+      </aside>
 
-      <main className="flex-1 max-w-5xl mx-auto w-full p-6">
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col h-screen overflow-hidden">
+        {/* Top Header */}
+        <header className="h-20 bg-white/80 backdrop-blur-md border-b border-[#E2E8F0] flex items-center justify-between px-10 sticky top-0 z-10 shrink-0">
+          <h2 className="text-2xl font-black text-[#0F172A] capitalize">
+            {activeTab.replace(/([A-Z])/g, ' $1').trim()}
+          </h2>
+          <div className="flex items-center gap-3">
+            <span className="px-3 py-1 bg-blue-50 text-blue-700 text-[10px] font-black rounded-lg uppercase tracking-widest border border-blue-100">
+              {isAdmin ? "Enterprise Access" : "Department Access"}
+            </span>
+          </div>
+        </header>
+
+        {/* Scrollable Content */}
+        <main className="flex-1 overflow-y-auto p-10">
+          <div className="max-w-6xl mx-auto pb-10">
         {/* UPDATES TAB */}
         {activeTab === "updates" && (
           <div className="space-y-6">
@@ -693,7 +730,9 @@ export default function AdminDashboard() {
             )}
           </div>
         )}
-      </main>
+          </div>
+        </main>
+      </div>
     </div>
   );
 }
