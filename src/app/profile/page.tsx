@@ -6,6 +6,7 @@ import { auth, db, storage } from "@/lib/firebase/firebase";
 import { updateProfile, onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import AppShell from "@/components/AppShell";
 
 export default function ProfilePage() {
   const [isEditing, setIsEditing] = useState(false);
@@ -109,24 +110,28 @@ export default function ProfilePage() {
   }
 
   return (
-    <div className="flex flex-col min-h-screen bg-[#F8FAFC]">
-      <header className="flex items-center justify-between px-6 py-4 bg-white border-b border-[#E2E8F0] sticky top-0 z-20">
-        <div className="flex items-center gap-3">
-          <button onClick={() => router.back()} className="text-gray-400 hover:text-[#2563EB] transition-colors">
-            <span className="material-icons">arrow_back</span>
+    <AppShell>
+      <div className="flex-1 flex flex-col overflow-y-auto">
+      <div className="bg-white border-b border-[#E2E8F0] px-8 py-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-black text-[#0F172A] tracking-tight">Profile & Settings</h1>
+            <p className="text-sm text-gray-500 mt-1">Manage your account information</p>
+          </div>
+          <button
+            onClick={() => {
+              setIsEditing(!isEditing);
+              if (isEditing) setPhotoFile(null);
+            }}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold transition-all shadow-sm ${
+              isEditing ? "bg-gray-100 text-gray-600 border border-gray-200" : "bg-[#0F172A] text-white hover:bg-[#1E293B]"
+            }`}
+          >
+            <span className="material-icons text-sm">{isEditing ? "close" : "edit"}</span>
+            {isEditing ? "Cancel" : "Edit Profile"}
           </button>
-          <h1 className="text-xl font-black text-gray-900 tracking-tight">Profile</h1>
         </div>
-        <button
-          onClick={() => {
-            setIsEditing(!isEditing);
-            if (isEditing) setPhotoFile(null);
-          }}
-          className="text-sm font-bold text-[#2563EB] bg-blue-50 px-4 py-1.5 rounded-full hover:bg-blue-100 transition-colors"
-        >
-          {isEditing ? "CANCEL" : "EDIT PROFILE"}
-        </button>
-      </header>
+      </div>
 
       <main className="flex-1 flex flex-col items-center px-4 py-12 pb-24 max-w-lg mx-auto w-full">
         <div className="relative group mb-8">
@@ -228,20 +233,7 @@ export default function ProfilePage() {
         )}
       </main>
 
-      <nav className="fixed bottom-0 left-0 w-full bg-white/80 backdrop-blur-md border-t border-[#E2E8F0] flex justify-around py-2.5 z-20">
-        <a href="/home" className="flex flex-col items-center text-gray-400 px-6 py-1 rounded-xl">
-          <span className="material-icons">chat</span>
-          <span className="text-[10px] font-bold mt-0.5">CHATS</span>
-        </a>
-        <a href="/discover" className="flex flex-col items-center text-gray-400 px-6 py-1 rounded-xl">
-          <span className="material-icons">groups</span>
-          <span className="text-[10px] font-bold mt-0.5 tracking-tighter">COMMUNITY</span>
-        </a>
-        <a href="/profile" className="flex flex-col items-center text-[#2563EB] px-6 py-1 rounded-xl">
-          <span className="material-icons">person</span>
-          <span className="text-[10px] font-bold mt-0.5">PROFILE</span>
-        </a>
-      </nav>
-    </div>
+      </div>
+    </AppShell>
   );
 }

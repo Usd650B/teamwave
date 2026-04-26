@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import Image from "next/image";
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { auth } from "@/lib/firebase/firebase";
@@ -23,7 +25,7 @@ export default function LandingPage() {
       <nav className="flex items-center justify-between px-6 py-5 max-w-7xl mx-auto w-full relative z-30">
         <div className="flex items-center gap-2">
            <div className="w-10 h-10 bg-[#2563EB] rounded-2xl flex items-center justify-center shadow-lg shadow-blue-500/30 overflow-hidden relative">
-             <img src="/logo.png" alt="Logo" className="w-full h-full object-cover scale-110" loading="eager" />
+             <Image src="/logo.png" alt="Logo" width={40} height={40} className="w-full h-full object-cover scale-110" priority />
            </div>
            <span className="text-2xl font-black text-gray-900 tracking-tighter">TeamWave</span>
         </div>
@@ -35,10 +37,10 @@ export default function LandingPage() {
             Download App
           </button>
           <div className="flex items-center gap-6">
-            <a href="/login" className="text-sm font-bold text-gray-500 hover:text-[#2563EB] transition-colors">LOGIN</a>
-            <a href="/signup" className="px-6 py-2.5 bg-[#1E293B] text-white text-sm font-bold rounded-xl hover:bg-black transition-all shadow-xl shadow-gray-200">
+            <Link href="/login" className="text-sm font-bold text-gray-500 hover:text-[#2563EB] transition-colors">LOGIN</Link>
+            <Link href="/signup" className="px-6 py-2.5 bg-[#1E293B] text-white text-sm font-bold rounded-xl hover:bg-black transition-all shadow-xl shadow-gray-200">
               GET STARTED
-            </a>
+            </Link>
           </div>
         </div>
       </nav>
@@ -91,18 +93,18 @@ export default function LandingPage() {
           </div>
           
           <h1 className="text-6xl md:text-8xl font-black text-[#1E293B] tracking-tight leading-[0.95] mb-6">
-            Premium <br /> 
-            <span className="bg-clip-text text-transparent bg-gradient-to-r from-[#2563EB] to-blue-400">Team Play.</span>
+            Your Team,<br /> 
+            <span className="bg-clip-text text-transparent bg-gradient-to-r from-[#2563EB] to-blue-400">Connected.</span>
           </h1>
 
           <p className="text-lg md:text-2xl text-gray-400 font-medium max-w-2xl mx-auto leading-relaxed">
-            Fast, minimal messaging for high-performance teams. Download the app to your home screen for the full experience.
+            Real-time updates from the back office, instant issue escalation, and friend-based team chat — all in one platform.
           </p>
 
           <div className="flex flex-col sm:flex-row gap-4 justify-center items-center pt-8">
-            <a href="/signup" className="w-full sm:w-auto px-12 py-5 bg-[#2563EB] text-white font-black text-xl rounded-2xl hover:bg-blue-600 transition-all shadow-2xl shadow-blue-500/40 hover:-translate-y-1">
+            <Link href="/signup" className="w-full sm:w-auto px-12 py-5 bg-[#2563EB] text-white font-black text-xl rounded-2xl hover:bg-blue-600 transition-all shadow-2xl shadow-blue-500/40 hover:-translate-y-1">
               Start Now — Free
-            </a>
+            </Link>
             <button 
               onClick={() => {
                 const btn = document.getElementById('install-button');
@@ -122,13 +124,13 @@ export default function LandingPage() {
       <footer className="py-8 border-t border-gray-100 relative z-30">
         <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-4">
            <p className="text-xs text-gray-400 font-bold uppercase tracking-widest flex items-center gap-2">
-             <img src="/logo.png" className="w-4 h-4" />
+             <Image src="/logo.png" alt="TeamWave Logo" width={16} height={16} className="w-4 h-4" />
              © 2026 TeamWave Inc. • Premium Quality
            </p>
            <div className="flex gap-6">
-             <a href="#" className="text-[10px] font-black text-gray-400 hover:text-gray-900 uppercase">Privacy</a>
-             <a href="#" className="text-[10px] font-black text-gray-400 hover:text-gray-900 uppercase">Terms</a>
-             <a href="#" className="text-[10px] font-black text-gray-400 hover:text-gray-900 uppercase">Support</a>
+             <Link href="#" className="text-[10px] font-black text-gray-400 hover:text-gray-900 uppercase">Privacy</Link>
+             <Link href="#" className="text-[10px] font-black text-gray-400 hover:text-gray-900 uppercase">Terms</Link>
+             <Link href="#" className="text-[10px] font-black text-gray-400 hover:text-gray-900 uppercase">Support</Link>
            </div>
         </div>
       </footer>

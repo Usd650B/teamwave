@@ -3,375 +3,220 @@
 import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { db, auth } from "@/lib/firebase/firebase";
-import { collection, query, where, onSnapshot, orderBy, getDocs, doc, getDoc, deleteDoc } from "firebase/firestore";
+import { collection, query, orderBy, onSnapshot, doc, getDoc } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
+import { motion, AnimatePresence } from "framer-motion";
+import AppShell from "@/components/AppShell";
 
-interface Conversation {
-  id: string;
-  name?: string;
-  participants: string[];
-  isGroup?: boolean;
-  lastMessage?: string;
-  updatedAt?: any;
-  isActive?: boolean;
-  unread?: boolean;
+interface Update {
+  id: string; title: string; message: string; priority: "normal" | "urgent";
+  createdAt: any; authorName: string;
 }
 
-interface UserProfile {
-  id: string;
-  name?: string;
-  profilePhoto?: string;
-  jobTitle?: string;
-  isVerified?: boolean;
-}
-
-export default function ChatList() {
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [userCache, setUserCache] = useState<Record<string, UserProfile>>({});
-  const [searchQuery, setSearchQuery] = useState("");
-  const [showGlobalSearch, setShowGlobalSearch] = useState(false);
-  const [searchResults, setSearchResults] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
+export default function HomePage() {
+  const [updates, setUpdates] = useState<Update[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState(auth.currentUser);
+  const [selectedUpdate, setSelectedUpdate] = useState<Update | null>(null);
   const router = useRouter();
 
-  // Wait for auth state + check active status
   useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+    const unsub = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
-      if (!user) {
-        router.replace("/login");
-        return;
-      }
-
-      // Check if user is active
+      if (!user) { router.replace("/login"); return; }
       const userDoc = await getDoc(doc(db, "users", user.uid));
-      if (userDoc.exists()) {
-        const userData = userDoc.data();
-        if (userData.isActive === false) {
-          await auth.signOut();
-          router.replace("/login?error=account_disabled");
-        }
+      if (userDoc.exists() && userDoc.data().isActive === false) {
+        await auth.signOut(); router.replace("/login?error=account_disabled");
       }
     });
-    return unsubscribeAuth;
+    return unsub;
   }, [router]);
 
-  // Subscribe to conversations
   useEffect(() => {
     if (!currentUser) return;
+    const q = query(collection(db, "updates"), orderBy("createdAt", "desc"));
+    const unsub = onSnapshot(q, (snap) => {
+      const allDocs = snap.docs.map(d => ({ id: d.id, ...d.data() })) as any[];
+      setUpdates(allDocs.filter(d => !d.isSchedule) as Update[]);
+      setIsLoading(false);
+    }, () => setIsLoading(false));
+    return () => unsub();
+  }, [currentUser]);
 
-    const q = query(
-      collection(db, "conversations"),
-      where("participants", "array-contains", currentUser.uid),
-      orderBy("updatedAt", "desc")
-    );
-    const unsubscribe = onSnapshot(q, 
-      async (snapshot) => {
-        const convs = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Conversation));
-        setConversations(convs);
-
-        // Fetch user info for private chats to get correct names/photos
-        for (const conv of convs) {
-          if (!conv.isGroup && conv.participants) {
-            const otherId = conv.participants.find((uid: string) => uid !== currentUser?.uid);
-            if (otherId && !userCache[otherId]) {
-               const userDoc = await getDoc(doc(db, "users", otherId));
-               if (userDoc.exists()) {
-                  const userData = userDoc.data();
-                  setUserCache(prev => ({ ...prev, [otherId]: { id: userDoc.id, ...userData } as UserProfile }));
-               }
-            }
-          }
-        }
-      },
-      (error) => {
-        if (error.code === 'failed-precondition') {
-          console.warn("Missing index for conversations. Retrying with client-side sort.");
-          // Fallback query without orderBy
-          const fallbackQ = query(
-            collection(db, "conversations"),
-            where("participants", "array-contains", currentUser.uid)
-          );
-          onSnapshot(fallbackQ, (snapshot) => {
-            const convs = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Conversation));
-            // Sort client-side
-            const sorted = convs.sort((a, b) => {
-              const dateA = a.updatedAt?.toDate?.() || 0;
-              const dateB = b.updatedAt?.toDate?.() || 0;
-              return dateB - dateA;
-            });
-            setConversations(sorted);
-          });
-        } else {
-          console.error("Conversations listener error:", error);
-        }
-      }
-    );
-    return () => unsubscribe();
-  }, [currentUser, userCache]);
-
-  const deleteChat = async (e: React.MouseEvent, chatId: string) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!confirm("Remove this conversation?")) return;
-    try {
-      await deleteDoc(doc(db, "conversations", chatId));
-    } catch (err) {
-      console.error("Delete failed:", err);
-    }
+  const formatTime = (ts: any) => {
+    if (!ts?.toDate) return "";
+    const d = ts.toDate();
+    const now = new Date();
+    const diff = now.getTime() - d.getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return "Just now";
+    if (mins < 60) return `${mins}m ago`;
+    if (mins < 1440) return `${Math.floor(mins / 60)}h ago`;
+    if (mins < 10080) return `${Math.floor(mins / 1440)}d ago`;
+    return d.toLocaleDateString();
   };
-
-  const handleGlobalSearch = async () => {
-    if (!searchQuery.trim()) return;
-    setLoading(true);
-    try {
-      const allResults: any[] = [];
-      for (const conv of conversations) {
-        const messagesRef = collection(db, "conversations", conv.id, "messages");
-        const messagesSnapshot = await getDocs(messagesRef);
-        const matchingMessages = messagesSnapshot.docs
-          .map((doc) => doc.data())
-          .filter((msg) => msg.message?.toLowerCase().includes(searchQuery.toLowerCase()));
-        if (matchingMessages.length > 0) {
-          allResults.push({
-            conversationId: conv.id,
-            conversationName: conv.name || "Unknown",
-            message: matchingMessages[0]?.message,
-            timestamp: matchingMessages[0]?.createdAt,
-            conversation: conv,
-          });
-        }
-      }
-      setSearchResults(allResults);
-    } catch (error) {
-      console.error("Search error:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const filteredConversations =
-    showGlobalSearch && searchQuery.trim()
-      ? conversations.filter((conv) =>
-          searchResults.some((result) => result.conversationId === conv.id)
-        )
-      : conversations;
 
   return (
-    <div className="flex flex-col min-h-screen bg-[#F8FAFC]">
-      <header className="flex items-center justify-between px-6 py-4 bg-white border-b border-[#E2E8F0] sticky top-0 z-20">
-        <div className="flex items-center gap-2">
-           <div className="w-8 h-8 bg-[#2563EB] rounded-lg flex items-center justify-center shadow-lg shadow-blue-500/20 overflow-hidden">
-             <img src="/logo.png" alt="Logo" className="w-full h-full object-cover scale-110" />
-           </div>
-           <h1 className="text-xl font-black text-gray-900 tracking-tight">TeamWave</h1>
-        </div>
-        <div className="flex items-center gap-2">
-          {/* PWA Installer Script for Home */}
-          <script dangerouslySetInnerHTML={{ __html: `
-            let homeDeferredPrompt;
-            window.addEventListener('beforeinstallprompt', (e) => {
-              e.preventDefault();
-              homeDeferredPrompt = e;
-              const btn = document.getElementById('home-install-btn');
-              if (btn) btn.classList.remove('hidden');
-            });
-            window.addEventListener('load', () => {
-              const btn = document.getElementById('home-install-btn');
-              if (btn) {
-                btn.addEventListener('click', async () => {
-                  if (homeDeferredPrompt) {
-                    homeDeferredPrompt.prompt();
-                    const { outcome } = await homeDeferredPrompt.userChoice;
-                    if (outcome === 'accepted') btn.classList.add('hidden');
-                    homeDeferredPrompt = null;
-                  } else {
-                    alert("To download: Tap the 'Share' icon (ios) or ⋮ (android) and 'Add to Home Screen'");
-                  }
-                });
-              }
-            });
-          `}} />
-          <button
-            id="home-install-btn"
-            className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-blue-50 text-[#2563EB] text-[10px] font-black rounded-lg hover:bg-blue-100 transition-all uppercase tracking-widest mr-2"
-          >
-            <span className="material-icons text-xs">download</span>
-            App
-          </button>
-          <button
-            onClick={() => setShowGlobalSearch(!showGlobalSearch)}
-            className="w-10 h-10 rounded-2xl bg-blue-50 text-[#2563EB] flex items-center justify-center hover:bg-blue-100 transition-all hover:scale-105"
-            title="Search Messages"
-          >
-            <span className="material-icons text-xl">search</span>
-          </button>
-          <button
-            onClick={() => router.push("/groups")}
-            className="w-10 h-10 rounded-2xl bg-blue-50 text-[#2563EB] flex items-center justify-center hover:bg-blue-100 transition-all hover:scale-105"
-            title="Communities"
-          >
-            <span className="material-icons text-xl">groups</span>
-          </button>
-          <a 
-            href="/profile" 
-            className="w-10 h-10 rounded-2xl bg-[#E5E7EB] overflow-hidden flex items-center justify-center border-2 border-white shadow-sm ml-1 hover:scale-105 transition-all"
-          >
-            {currentUser?.photoURL ? (
-              <img src={currentUser.photoURL} alt="Profile" className="w-full h-full object-cover" />
-            ) : (
-              <span className="material-icons text-gray-400">account_circle</span>
-            )}
-          </a>
-        </div>
-      </header>
-
-      <main className="flex-1 flex flex-col items-center px-4 py-8 pb-28 max-w-2xl mx-auto w-full">
-        {showGlobalSearch && (
-          <div className="w-full bg-white rounded-3xl shadow-xl shadow-blue-500/5 p-6 mb-8 border border-blue-50 animate-in fade-in slide-in-from-top-4 duration-500">
-            <div className="relative flex gap-3">
-              <div className="relative flex-1">
-                <span className="material-icons absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">search</span>
-                <input
-                  type="text"
-                  placeholder="Find messages in any chat..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleGlobalSearch()}
-                  className="w-full pl-12 pr-4 py-4 bg-gray-50 border-none rounded-2xl focus:ring-4 focus:ring-blue-500/10 transition-all text-sm outline-none"
-                  autoFocus
-                />
+    <AppShell>
+      <div className="flex-1 overflow-y-auto">
+        {/* Page Header */}
+        <div className="bg-white border-b border-[#E2E8F0] px-8 py-6">
+          <div className="max-w-4xl">
+            <div className="flex items-center justify-between">
+              <div>
+                <h1 className="text-2xl font-black text-[#0F172A] tracking-tight">Updates & Announcements</h1>
+                <p className="text-sm text-gray-500 mt-1">Official communications from the back office</p>
               </div>
-              <button
-                onClick={handleGlobalSearch}
-                className="px-6 py-4 bg-[#2563EB] text-white rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-blue-600 transition-all shadow-lg shadow-blue-500/30"
-              >
-                FIND
-              </button>
+              <div className="flex items-center gap-2 bg-green-50 px-4 py-2 rounded-xl border border-green-100">
+                <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                <span className="text-xs font-bold text-green-700 uppercase tracking-wider">Live Feed</span>
+              </div>
             </div>
-
-            {loading && (
-              <div className="flex justify-center mt-6">
-                <div className="animate-spin rounded-full h-8 w-8 border-4 border-[#2563EB] border-t-transparent"></div>
-              </div>
-            )}
-
-            {!loading && searchQuery && searchResults.length === 0 && (
-              <div className="text-xs font-bold text-gray-400 mt-6 text-center py-4 bg-gray-50 rounded-2xl uppercase tracking-widest">No matching results</div>
-            )}
-
-            {!loading && searchResults.length > 0 && (
-              <div className="text-[10px] font-black text-blue-500 mt-6 px-1 uppercase tracking-widest">
-                {searchResults.length} Match{searchResults.length !== 1 ? "es" : ""} found
-              </div>
-            )}
-          </div>
-        )}
-
-        <div className="w-full space-y-4">
-          <div className="flex justify-between items-center mb-6 px-2">
-            <h2 className="text-2xl font-black text-[#1E293B] tracking-tight">
-              {showGlobalSearch && searchQuery ? "Results" : "Messages"}
-            </h2>
-            {!showGlobalSearch && (
-              <button onClick={() => router.push("/discover")} className="text-xs font-black text-[#2563EB] bg-blue-50 px-4 py-2 rounded-xl hover:bg-blue-100 transition-colors uppercase tracking-widest">
-                Start +
-              </button>
-            )}
-          </div>
-          
-          <div className="space-y-3">
-            {filteredConversations.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-20 px-8 text-center bg-white rounded-3xl border border-dashed border-gray-200">
-                <div className="w-20 h-20 bg-blue-50 rounded-[2.5rem] flex items-center justify-center mb-6">
-                  <span className="material-icons text-[#2563EB] text-4xl">chat_bubble_outline</span>
-                </div>
-                <h3 className="text-[#1E293B] font-black text-lg mb-2 uppercase tracking-tight">Silent Waves...</h3>
-                <p className="text-sm text-gray-400 font-medium max-w-[240px] leading-relaxed mb-8">
-                  {showGlobalSearch && searchQuery ? "Try searching for a different keyword or name." : "Start a conversation with your team members in the discovery tab."}
-                </p>
-                {!showGlobalSearch && (
-                  <button 
-                    onClick={() => router.push("/discover")}
-                    className="px-8 py-3 bg-[#1E293B] text-white rounded-2xl text-xs font-black uppercase tracking-widest hover:scale-105 transition-all shadow-xl shadow-gray-200"
-                  >
-                    DISCOVER TEAM
-                  </button>
-                )}
-              </div>
-            ) : (
-              filteredConversations.map((conv) => {
-                const otherUid = conv.isGroup ? null : conv.participants?.find((uid: string) => uid !== currentUser?.uid);
-                const chatName = conv.isGroup ? conv.name : (otherUid && userCache[otherUid] ? userCache[otherUid].name : (conv.name || "Private Chat"));
-                const chatPhoto = conv.isGroup ? null : (otherUid && userCache[otherUid] ? userCache[otherUid].profilePhoto : null);
-                
-                return (
-                  <a
-                    key={conv.id}
-                    href={`/chat/${conv.id}`}
-                    className="flex items-center gap-4 p-5 bg-white rounded-3xl border border-[#E2E8F0] hover:border-[#2563EB] transition-all group relative overflow-hidden shadow-sm hover:shadow-md active:scale-95"
-                  >
-                    <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-50 to-blue-100 flex items-center justify-center flex-shrink-0 relative">
-                      {chatPhoto ? (
-                        <img src={chatPhoto} alt={chatName} className="w-full h-full rounded-2xl object-cover shadow-inner" />
-                      ) : (
-                        <span className="material-icons text-blue-300 text-3xl">{conv.isGroup ? 'groups' : 'person'}</span>
-                      )}
-                      {conv.isActive && <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 border-4 border-white rounded-full"></div>}
-                    </div>
-                    
-                    <div className="flex-1 min-w-0">
-                      <div className="flex justify-between items-baseline mb-1">
-                        <div className="font-black text-[#1E293B] truncate pr-2 tracking-tight flex items-center gap-1">
-                          {chatName}
-                          {otherUid && userCache[otherUid]?.isVerified && (
-                             <span className="material-icons text-green-500 text-sm" title="Verified Member">verified</span>
-                          )}
-                        </div>
-                        <div className="text-[10px] font-black text-gray-300 flex-shrink-0 uppercase tracking-widest">
-                          {conv.updatedAt?.toDate?.()
-                            ? conv.updatedAt.toDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-                            : ""}
-                        </div>
-                      </div>
-                      <div className="text-sm text-gray-400 truncate font-semibold">
-                        {conv.lastMessage || <span className="text-gray-200 italic font-medium">New match! Send a wave 👋</span>}
-                      </div>
-                    </div>
-                    
-                    <div className="flex flex-col items-end gap-2">
-                       {conv.unread && <div className="w-2.5 h-2.5 bg-[#2563EB] rounded-full shadow-lg shadow-blue-500/50"></div>}
-                       <button 
-                         onClick={(e) => deleteChat(e, conv.id)}
-                         className="opacity-0 group-hover:opacity-100 p-2 text-gray-300 hover:text-red-500 transition-all active:scale-95"
-                         title="Delete Conversation"
-                       >
-                         <span className="material-icons text-sm">delete</span>
-                       </button>
-                    </div>
-                  </a>
-                );
-              })
-            )}
           </div>
         </div>
-      </main>
 
-      <nav className="fixed bottom-0 left-0 w-full bg-white/80 backdrop-blur-xl border-t border-gray-100 flex justify-around py-4 z-20">
-        <a href="/home" className="flex flex-col items-center text-[#2563EB] px-6 py-1">
-          <span className="material-icons">chat</span>
-          <span className="text-[9px] font-black mt-1 tracking-widest">CHATS</span>
-        </a>
-        <a href="/discover" className="flex flex-col items-center text-gray-300 hover:text-gray-500 px-6 py-1 transition-colors">
-          <span className="material-icons">search</span>
-          <span className="text-[9px] font-black mt-1 tracking-widest">TEAM</span>
-        </a>
-        <a href="/profile" className="flex flex-col items-center text-gray-300 hover:text-gray-500 px-6 py-1 transition-colors">
-          <span className="material-icons">person</span>
-          <span className="text-[9px] font-black mt-1 tracking-widest">ME</span>
-        </a>
-      </nav>
-    </div>
+        {/* Stats Bar */}
+        <div className="bg-white border-b border-[#E2E8F0] px-8 py-3">
+          <div className="max-w-4xl flex items-center gap-6">
+            <div className="flex items-center gap-2">
+              <span className="material-icons text-gray-400 text-sm">article</span>
+              <span className="text-xs font-bold text-gray-500">{updates.length} Total Updates</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="material-icons text-red-400 text-sm">priority_high</span>
+              <span className="text-xs font-bold text-gray-500">{updates.filter(u => u.priority === "urgent").length} Urgent</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Title-only List */}
+        <div className="px-8 py-6 max-w-4xl space-y-6">
+
+          {isLoading ? (
+            <div className="space-y-2">
+              {[1, 2, 3, 4, 5].map(i => (
+                <div key={i} className="bg-white rounded-xl p-4 border border-[#E2E8F0] animate-pulse shadow-sm">
+                  <div className="h-4 bg-gray-100 rounded-lg w-1/3"></div>
+                </div>
+              ))}
+            </div>
+          ) : updates.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-24 px-8 text-center bg-white rounded-2xl border border-dashed border-gray-200 shadow-sm">
+              <div className="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center mb-5">
+                <span className="material-icons text-blue-500 text-3xl">campaign</span>
+              </div>
+              <h3 className="text-[#0F172A] font-bold text-lg mb-2">No Updates Posted</h3>
+              <p className="text-sm text-gray-400 max-w-sm">The back office hasn&apos;t posted any updates yet. Check back soon for important announcements.</p>
+            </div>
+          ) : (
+            <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm overflow-hidden divide-y divide-gray-100">
+              {updates.map((update, i) => (
+                <motion.button
+                  key={update.id}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: i * 0.03 }}
+                  onClick={() => setSelectedUpdate(update)}
+                  className="w-full flex items-center gap-4 px-5 py-4 hover:bg-blue-50/40 transition-all text-left group"
+                >
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                    update.priority === "urgent" ? "bg-red-50" : "bg-blue-50"
+                  }`}>
+                    <span className={`material-icons text-sm ${update.priority === "urgent" ? "text-red-500" : "text-blue-500"}`}>
+                      {update.priority === "urgent" ? "warning" : "campaign"}
+                    </span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      {update.priority === "urgent" && (
+                        <span className="px-1.5 py-0.5 bg-red-50 text-red-600 text-[8px] font-black rounded uppercase tracking-wider border border-red-100">
+                          Urgent
+                        </span>
+                      )}
+                      <h3 className="text-sm font-bold text-[#0F172A] truncate group-hover:text-blue-700 transition-colors">
+                        {update.title}
+                      </h3>
+                    </div>
+                  </div>
+                  <span className="text-[11px] text-gray-400 font-medium flex-shrink-0">{formatTime(update.createdAt)}</span>
+                  <span className="material-icons text-gray-300 text-sm group-hover:text-blue-500 transition-colors">chevron_right</span>
+                </motion.button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Detail Modal */}
+      <AnimatePresence>
+        {selectedUpdate && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-6"
+            onClick={() => setSelectedUpdate(null)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ type: "spring", duration: 0.4 }}
+              className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] overflow-hidden flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div className={`flex items-center justify-between px-6 py-4 border-b ${
+                selectedUpdate.priority === "urgent" ? "border-red-100 bg-red-50/50" : "border-gray-100"
+              }`}>
+                <div className="flex items-center gap-3">
+                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${
+                    selectedUpdate.priority === "urgent" ? "bg-red-100" : "bg-blue-50"
+                  }`}>
+                    <span className={`material-icons text-lg ${selectedUpdate.priority === "urgent" ? "text-red-500" : "text-blue-500"}`}>
+                      {selectedUpdate.priority === "urgent" ? "warning" : "campaign"}
+                    </span>
+                  </div>
+                  {selectedUpdate.priority === "urgent" && (
+                    <span className="px-2.5 py-1 bg-red-100 text-red-600 text-[10px] font-black rounded-lg uppercase tracking-widest border border-red-200">
+                      Urgent
+                    </span>
+                  )}
+                  <span className="text-xs text-gray-400 font-medium">{formatTime(selectedUpdate.createdAt)}</span>
+                </div>
+                <button
+                  onClick={() => setSelectedUpdate(null)}
+                  className="w-9 h-9 rounded-xl bg-gray-100 hover:bg-red-50 text-gray-400 hover:text-red-500 flex items-center justify-center transition-all"
+                >
+                  <span className="material-icons text-lg">close</span>
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div className="flex-1 overflow-y-auto px-6 py-6">
+                <h2 className="text-xl font-black text-[#0F172A] tracking-tight mb-4">{selectedUpdate.title}</h2>
+                <p className="text-sm text-gray-600 leading-relaxed whitespace-pre-wrap">{selectedUpdate.message}</p>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="flex items-center justify-between px-6 py-4 border-t border-gray-100 bg-gray-50/50">
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-md bg-blue-100 flex items-center justify-center">
+                    <span className="material-icons text-blue-600 text-xs">person</span>
+                  </div>
+                  <span className="text-xs font-semibold text-gray-500">{selectedUpdate.authorName || "Back Office"}</span>
+                </div>
+                <button
+                  onClick={() => setSelectedUpdate(null)}
+                  className="px-5 py-2 bg-[#0F172A] text-white rounded-xl text-xs font-bold hover:bg-[#1E293B] transition-all shadow-sm"
+                >
+                  Close
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </AppShell>
   );
 }

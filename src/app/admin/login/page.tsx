@@ -17,66 +17,50 @@ export default function AdminLogin() {
     setLoading(true);
     setError("");
 
-    // Specific Admin Credentials Enforcement
-    const REQUIRED_ADMIN_EMAIL = "Admin@brainwave.com";
-    
-    if (email.trim().toLowerCase() !== REQUIRED_ADMIN_EMAIL.toLowerCase()) {
-      setError("Unauthorized access. This terminal is for root administrators only.");
-      setLoading(false);
-      return;
-    }
+    const REQUIRED_ADMIN_EMAIL = "shabanimnango99@gmail.com";
+    // Defer authorization to the dashboard to allow supervisors to access specific parts
 
     try {
-      // 1. Try to sign in
-      try {
-        await signInWithEmailAndPassword(auth, email, password);
-        console.log("Admin: Signed in successfully.");
-        router.push("/admin");
-      } catch (signInErr: any) {
-        // 2. If user doesn't exist, try to create it (Auto-Initialize)
-        // Note: auth/invalid-credential is often returned instead of auth/user-not-found
-        // so we check if the email matches our root requirement and try to create it just in case.
-        if (signInErr.code === "auth/user-not-found" || signInErr.code === "auth/invalid-credential") {
-          console.log("Admin: Account not found or rejected. Attempting to provision root account...");
-          try {
-            const { createUserWithEmailAndPassword } = await import("firebase/auth");
-            await createUserWithEmailAndPassword(auth, email, password);
-            
-            // Also create the user document in Firestore to ensure dashboard works
-            try {
-              const { doc, setDoc, serverTimestamp } = await import("firebase/firestore");
-              const { db } = await import("@/lib/firebase/firebase");
-              await setDoc(doc(db, "users", auth.currentUser?.uid || ""), {
-                id: auth.currentUser?.uid,
-                name: "System Admin",
-                email: email.toLowerCase(),
-                isAdmin: true,
-                isActive: true,
-                isVerified: true,
-                createdAt: serverTimestamp()
-              }, { merge: true });
-            } catch (fsErr) {
-              console.error("Failed to provision admin document:", fsErr);
-            }
-
-            console.log("Admin: Root account provisioned successfully.");
-            router.push("/admin");
-          } catch (createErr: any) {
-            console.error("Admin: Provisioning failed", createErr);
-            throw createErr; // Pass to outer catch
-          }
-        } else {
-          throw signInErr; // Pass to outer catch
+      await signInWithEmailAndPassword(auth, email, password);
+      router.push("/admin");
+    } catch (signInErr: any) {
+      if (signInErr.code === "auth/user-not-found") {
+        // Auto-provision the admin account
+        try {
+          const { createUserWithEmailAndPassword } = await import("firebase/auth");
+          await createUserWithEmailAndPassword(auth, email, password);
+          const { doc, setDoc, serverTimestamp } = await import("firebase/firestore");
+          const { db } = await import("@/lib/firebase/firebase");
+          await setDoc(doc(db, "users", auth.currentUser?.uid || ""), {
+            id: auth.currentUser?.uid, name: "System Admin",
+            email: email.toLowerCase(), isAdmin: true,
+            isActive: true, isVerified: true, createdAt: serverTimestamp()
+          }, { merge: true });
+          router.push("/admin");
+        } catch (createErr: any) {
+          setError(createErr.code === "auth/weak-password"
+            ? "Password must be at least 6 characters."
+            : "Failed to provision admin account.");
+          setLoading(false);
         }
-      }
-    } catch (err: any) {
-      console.error("Admin Login Terminal Error:", err);
-      if (err.code === "auth/weak-password") {
-        setError("Security Error: Password does not meet minimum complexity.");
+      } else if (signInErr.code === "auth/invalid-credential" || signInErr.code === "auth/wrong-password") {
+        setError("Wrong password. Use the reset button below if you forgot it.");
+        setLoading(false);
       } else {
-        setError("Access Denied: Terminal credentials rejected.");
+        setError("Access Denied: " + signInErr.message);
+        setLoading(false);
       }
-      setLoading(false);
+    }
+  };
+
+  const resetPassword = async () => {
+    const { sendPasswordResetEmail } = await import("firebase/auth");
+    try {
+      await sendPasswordResetEmail(auth, "shabanimnango99@gmail.com");
+      setError("");
+      alert("Password reset email sent to shabanimnango99@gmail.com. Check your inbox.");
+    } catch (err: any) {
+      alert("Failed to send reset email: " + err.message);
     }
   };
 
@@ -154,13 +138,20 @@ export default function AdminLogin() {
             </form>
           </div>
 
-          <div className="text-center">
+          <div className="text-center space-y-3">
             <button 
               onClick={() => router.push("/")}
               className="text-[10px] font-black text-gray-500 hover:text-white uppercase tracking-widest transition-colors flex items-center gap-2 mx-auto"
             >
                <span className="material-icons text-sm">arrow_back</span>
                Return to Landing
+            </button>
+            <button 
+              onClick={resetPassword}
+              className="text-[10px] font-black text-blue-500 hover:text-blue-400 uppercase tracking-widest transition-colors flex items-center gap-2 mx-auto"
+            >
+               <span className="material-icons text-sm">lock_reset</span>
+               Reset Admin Password
             </button>
           </div>
         </div>
