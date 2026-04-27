@@ -137,7 +137,27 @@ export default function AdminDashboard() {
         });
 
         unsubs.push(unsubUsers, unsubUpdates, unsubEsc, unsubAct);
-      } else {
+      } else if (isEsc) {
+        setLoading(false);
+        const qU = query(collection(db, "users"), orderBy("createdAt", "desc"));
+        const unsubUsers = onSnapshot(qU, (snap) => {
+          setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })) as User[]);
+        });
+
+        const qUp = query(collection(db, "updates"), orderBy("createdAt", "desc"));
+        const unsubUpdates = onSnapshot(qUp, (snap) => {
+          const allDocs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          setUpdates(allDocs.filter((d: any) => !d.isSchedule) as Update[]);
+          setSchedules(allDocs.filter((d: any) => d.isSchedule) as Schedule[]);
+        });
+
+        const qE = query(collection(db, "escalations"), orderBy("createdAt", "desc"), limit(500));
+        const unsubEsc = onSnapshot(qE, (snap) => {
+          setEscalations(snap.docs.map(d => ({ id: d.id, ...d.data() })) as Escalation[]);
+        });
+
+        unsubs.push(unsubUsers, unsubUpdates, unsubEsc);
+      } else if (isSup) {
         setLoading(false);
         // Load agents assigned to this supervisor so they can be assigned to schedules
         const unsubUsers = onSnapshot(query(collection(db, "users"), where("supervisorId", "==", user.uid)), (snap) => {
@@ -147,6 +167,7 @@ export default function AdminDashboard() {
         const unsubUpdatesSup = onSnapshot(qUpSup, (snap) => {
           const allDocs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
           setSchedules(allDocs.filter((d: any) => d.isSchedule) as Schedule[]);
+          setUpdates(allDocs.filter((d: any) => !d.isSchedule) as Update[]);
         });
         
         unsubs.push(unsubUsers, unsubUpdatesSup);
@@ -639,9 +660,25 @@ export default function AdminDashboard() {
                     <motion.div initial={{ height: 0 }} animate={{ height: "auto" }} className="border-t border-gray-100">
                       <div className="p-5 space-y-3 max-h-80 overflow-y-auto bg-gray-50/50">
                         {/* Original message */}
-                        <div className="flex justify-start">
-                          <div className="bg-white rounded-2xl rounded-tl-none px-4 py-2.5 border border-gray-100 max-w-[80%]">
-                            <p className="text-[10px] font-black text-orange-500 uppercase mb-1">{esc.workerName}</p>
+                        <div className="flex justify-start mb-4">
+                          <div className="bg-white rounded-2xl rounded-tl-none px-4 py-3 border border-gray-100 max-w-[80%] shadow-sm">
+                            <div className="flex items-center gap-2 mb-2 flex-wrap">
+                              <p className="text-[10px] font-black text-orange-500 uppercase">{esc.workerName}</p>
+                              {(() => {
+                                const worker = users.find(u => u.id === esc.workerId);
+                                if (worker) {
+                                  return (
+                                    <span className="text-[9px] text-gray-500 font-bold bg-gray-100 px-1.5 py-0.5 rounded border border-gray-200 flex items-center gap-1">
+                                      <span className="material-icons text-[10px]">contact_mail</span>
+                                      {worker.email}
+                                      {(worker as any).region ? ` • ${(worker as any).region}` : ""}
+                                      {(worker as any).phone ? ` • ${(worker as any).phone}` : ""}
+                                    </span>
+                                  );
+                                }
+                                return null;
+                              })()}
+                            </div>
                             <p className="text-sm text-gray-700">{esc.message}</p>
                           </div>
                         </div>
