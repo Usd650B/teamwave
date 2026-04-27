@@ -17,8 +17,9 @@ interface Agent {
 
 interface Escalation {
   id: string; subject: string; message: string; workerId: string;
-  workerName: string; status: "open" | "resolved"; createdAt: any;
+  workerName: string; status: "open" | "inprogress" | "closed"; createdAt: any;
   hasNewReply?: boolean; lastMessage?: string;
+  assignedRegion?: string; assignedSupervisorId?: string; forwardedAt?: any;
 }
 
 export default function SupervisorPage() {
@@ -60,34 +61,45 @@ export default function SupervisorPage() {
     return () => unsub();
   }, [currentUser, isSupervisor]);
 
-  // Load escalations from assigned agents
+  // Load escalations from assigned agents and forwarded to supervisor
   useEffect(() => {
-    if (!currentUser || !isSupervisor || agents.length === 0) return;
-    const agentIds = agents.map(a => a.id);
-    // Firestore 'in' supports up to 30
-    const chunks = [];
-    for (let i = 0; i < agentIds.length; i += 30) chunks.push(agentIds.slice(i, i + 30));
+    if (!currentUser || !isSupervisor) return;
+    
+    let workerEsc: Escalation[] = [];
+    let forwardedEsc: Escalation[] = [];
     const unsubs: (() => void)[] = [];
-    let allEsc: Escalation[] = [];
-    chunks.forEach((chunk, ci) => {
-      const q = query(collection(db, "escalations"), where("workerId", "in", chunk), orderBy("createdAt", "desc"));
-      const unsub = onSnapshot(q, (snap) => {
-        const data = snap.docs.map(d => ({ id: d.id, ...d.data() })) as Escalation[];
-        allEsc = [...allEsc.filter(e => !chunk.includes(e.workerId)), ...data];
-        allEsc.sort((a, b) => (b.createdAt?.toDate?.() || 0) - (a.createdAt?.toDate?.() || 0));
-        setEscalations([...allEsc]);
-      }, () => {
-        // fallback without index
-        const fb = query(collection(db, "escalations"), where("workerId", "in", chunk));
-        onSnapshot(fb, (snap) => {
+
+    const updateCombined = () => {
+      const map = new Map();
+      [...workerEsc, ...forwardedEsc].forEach(e => map.set(e.id, e));
+      const combined = Array.from(map.values());
+      combined.sort((a, b) => (b.createdAt?.toDate?.() || 0) - (a.createdAt?.toDate?.() || 0));
+      setEscalations(combined);
+    };
+
+    if (agents.length > 0) {
+      const agentIds = agents.map(a => a.id);
+      const chunks = [];
+      for (let i = 0; i < agentIds.length; i += 30) chunks.push(agentIds.slice(i, i + 30));
+      chunks.forEach(chunk => {
+        const q = query(collection(db, "escalations"), where("workerId", "in", chunk));
+        const unsub = onSnapshot(q, (snap) => {
           const data = snap.docs.map(d => ({ id: d.id, ...d.data() })) as Escalation[];
-          allEsc = [...allEsc.filter(e => !chunk.includes(e.workerId)), ...data];
-          allEsc.sort((a, b) => (b.createdAt?.toDate?.() || 0) - (a.createdAt?.toDate?.() || 0));
-          setEscalations([...allEsc]);
+          workerEsc = [...workerEsc.filter(e => !chunk.includes(e.workerId)), ...data];
+          updateCombined();
         });
+        unsubs.push(unsub);
       });
-      unsubs.push(unsub);
+    }
+
+    // Also fetch escalations forwarded to this supervisor from back office
+    const qSup = query(collection(db, "escalations"), where("assignedSupervisorId", "==", currentUser.uid));
+    const unsubSup = onSnapshot(qSup, (snap) => {
+      forwardedEsc = snap.docs.map(d => ({ id: d.id, ...d.data() })) as Escalation[];
+      updateCombined();
     });
+    unsubs.push(unsubSup);
+
     return () => unsubs.forEach(u => u());
   }, [currentUser, isSupervisor, agents]);
 
@@ -117,7 +129,7 @@ export default function SupervisorPage() {
 
   const resolveEsc = async (escId: string) => {
     if (!currentUser) return;
-    await updateDoc(doc(db, "escalations", escId), { status: "resolved" });
+    await updateDoc(doc(db, "escalations", escId), { status: "closed" });
     logActivity(currentUser.uid, myName, "escalation_resolved", `Resolved escalation`, escId);
   };
 
@@ -174,7 +186,7 @@ export default function SupervisorPage() {
             <span className="material-icons text-xl">headset_mic</span>
             <span className="flex-1 text-left">Contact Center</span>
             <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-400 text-[9px] font-black rounded-full min-w-[18px] text-center">
-              {escalations.filter(e => e.status === "open").length}
+              {escalations.filter(e => e.status === "open" || e.status === "inprogress").length}
             </span>
           </button>
           <button onClick={() => setActiveTab("agents")}
@@ -226,9 +238,13 @@ export default function SupervisorPage() {
                     <span className="material-icons text-orange-500 text-sm">pending</span>
                     <span className="text-xs font-bold text-orange-700">{escalations.filter(e => e.status === "open").length} Open</span>
                   </div>
+                  <div className="flex items-center gap-2 px-4 py-2 bg-blue-50 rounded-xl border border-blue-100">
+                    <span className="material-icons text-blue-500 text-sm">engineering</span>
+                    <span className="text-xs font-bold text-blue-700">{escalations.filter(e => e.status === "inprogress").length} In Progress</span>
+                  </div>
                   <div className="flex items-center gap-2 px-4 py-2 bg-green-50 rounded-xl border border-green-100">
                     <span className="material-icons text-green-500 text-sm">check_circle</span>
-                    <span className="text-xs font-bold text-green-700">{escalations.filter(e => e.status === "resolved").length} Resolved</span>
+                    <span className="text-xs font-bold text-green-700">{escalations.filter(e => e.status === "closed").length} Closed</span>
                   </div>
                 </div>
               </div>
@@ -243,6 +259,7 @@ export default function SupervisorPage() {
                     <motion.div key={esc.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }}
                       className={`bg-white rounded-2xl border shadow-sm overflow-hidden ${
                         esc.status === "open" ? "border-l-4 border-l-orange-400 border-t border-r border-b border-[#E2E8F0]" :
+                        esc.status === "inprogress" ? "border-l-4 border-l-blue-400 border-t border-r border-b border-[#E2E8F0]" :
                         "border-l-4 border-l-green-400 border-t border-r border-b border-[#E2E8F0]"
                       }`}>
                       <div className="p-5 cursor-pointer hover:bg-gray-50/50 transition-colors" onClick={() => openEscalation(esc.id)}>
@@ -260,13 +277,21 @@ export default function SupervisorPage() {
                                 </div>
                                 <span className="text-[10px] text-blue-700 font-bold">{esc.workerName}</span>
                               </div>
-                              <span className={`px-2 py-0.5 text-[10px] font-bold rounded-lg ${esc.status === "open" ? "bg-orange-50 text-orange-600 border border-orange-100" : "bg-green-50 text-green-600 border border-green-100"}`}>{esc.status}</span>
+                              <span className={`px-2 py-0.5 text-[10px] font-bold rounded-lg ${
+                                esc.status === "open" ? "bg-orange-50 text-orange-600 border border-orange-100" :
+                                esc.status === "inprogress" ? "bg-blue-50 text-blue-600 border border-blue-100" :
+                                "bg-green-50 text-green-600 border border-green-100"}`}>{esc.status === "inprogress" ? "In Progress" : esc.status === "closed" ? "Closed" : "Open"}</span>
+                              {esc.assignedRegion && esc.status === "inprogress" && (
+                                <span className="px-2 py-0.5 text-[9px] font-bold rounded-lg bg-indigo-50 text-indigo-600 border border-indigo-100 flex items-center gap-1">
+                                  <span className="material-icons text-[10px]">location_on</span>{esc.assignedRegion}
+                                </span>
+                              )}
                               <span className="text-xs text-gray-400">{formatTime(esc.createdAt)}</span>
                             </div>
                             <p className="text-sm text-gray-700 whitespace-pre-wrap line-clamp-2">{esc.message}</p>
                           </div>
                           <div className="flex items-center gap-2 flex-shrink-0">
-                            {esc.status === "open" && (
+                            {(esc.status === "open" || esc.status === "inprogress") && (
                               <button onClick={(e) => { e.stopPropagation(); resolveEsc(esc.id); }}
                                 className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-[10px] font-bold hover:bg-green-700 transition-all">
                                 Resolve
@@ -297,14 +322,17 @@ export default function SupervisorPage() {
                             </div>
                             {(escMessages[esc.id] || []).map(msg => (
                               <div key={msg.id} className={`flex ${msg.isAdmin ? "justify-end" : "justify-start"}`}>
-                                <div className={`rounded-2xl px-4 py-3 max-w-[80%] ${msg.isAdmin ? "bg-amber-500 text-white rounded-tr-sm" : "bg-white border border-gray-100 rounded-tl-sm"}`}>
-                                  <p className={`text-[10px] font-bold uppercase mb-1 ${msg.isAdmin ? "text-amber-100" : "text-blue-600"}`}>{msg.senderName}</p>
-                                  <p className="text-sm whitespace-pre-wrap">{msg.message}</p>
+                                <div className={`rounded-2xl px-4 py-3 max-w-[80%] ${
+                                  msg.isSystem ? "bg-indigo-50 border border-indigo-100 rounded-none text-indigo-900" :
+                                  msg.isAdmin ? "bg-amber-500 text-white rounded-tr-sm" : "bg-white border border-gray-100 rounded-tl-sm"}`}>
+                                  <p className={`text-[10px] font-bold uppercase mb-1 ${
+                                    msg.isSystem ? "text-indigo-500" : msg.isAdmin ? "text-amber-100" : "text-blue-600"}`}>{msg.senderName}</p>
+                                  <p className={`text-sm whitespace-pre-wrap ${msg.isSystem ? "italic" : ""}`}>{msg.message}</p>
                                 </div>
                               </div>
                             ))}
                           </div>
-                          {esc.status === "open" && (
+                          {esc.status !== "closed" && (
                             <div className="p-4 border-t border-gray-100 flex gap-3">
                               <input value={replyText} onChange={(e) => setReplyText(e.target.value)}
                                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendReply(esc.id); } }}

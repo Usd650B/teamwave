@@ -39,24 +39,19 @@ export default function ActivityPage() {
 
   useEffect(() => {
     if (!currentUser) return;
-    const q = query(
-      collection(db, "activityLog"),
-      where("userId", "==", currentUser.uid),
-      orderBy("createdAt", "desc"),
-      limit(100)
-    );
-    const unsub = onSnapshot(q, (snap) => {
-      setActivities(snap.docs.map(d => ({ id: d.id, ...d.data() })) as Activity[]);
+    const fb = query(collection(db, "activityLog"), where("userId", "==", currentUser.uid));
+    const unsub = onSnapshot(fb, (snap) => {
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() })) as Activity[];
+      data.sort((a, b) => (b.createdAt?.toDate?.() || 0) - (a.createdAt?.toDate?.() || 0));
+      
+      const oneWeekAgo = new Date();
+      oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+      
+      setActivities(data.slice(0, 100).filter(a => {
+        if (!a.createdAt?.toDate) return true;
+        return a.createdAt.toDate() > oneWeekAgo;
+      }));
       setLoading(false);
-    }, () => {
-      // Fallback without index
-      const fb = query(collection(db, "activityLog"), where("userId", "==", currentUser.uid));
-      onSnapshot(fb, (snap) => {
-        const data = snap.docs.map(d => ({ id: d.id, ...d.data() })) as Activity[];
-        data.sort((a, b) => (b.createdAt?.toDate?.() || 0) - (a.createdAt?.toDate?.() || 0));
-        setActivities(data.slice(0, 100));
-        setLoading(false);
-      });
     });
     return () => unsub();
   }, [currentUser]);
@@ -154,6 +149,15 @@ export default function ActivityPage() {
                   </div>
                 </div>
               ))
+            )}
+            
+            {!loading && (
+              <div className="mt-8 text-center pt-6 border-t border-gray-100">
+                <p className="text-xs text-gray-500 font-bold mb-3">Logs older than 1 week are automatically archived.</p>
+                <button onClick={() => router.push("/library")} className="px-6 py-2.5 bg-indigo-50 text-indigo-600 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-indigo-100 transition-colors border border-indigo-100">
+                  Open Library
+                </button>
+              </div>
             )}
           </div>
         </div>

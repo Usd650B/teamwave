@@ -21,8 +21,9 @@ interface Supervisor {
 }
 
 interface Escalation {
-  id: string; message: string; status: "open" | "resolved";
+  id: string; message: string; status: "open" | "inprogress" | "closed";
   createdAt: any; hasNewReply?: boolean;
+  assignedRegion?: string;
 }
 
 export default function EscalationsPage() {
@@ -173,9 +174,13 @@ export default function EscalationsPage() {
                 <span className="material-icons text-orange-500 text-sm">pending</span>
                 <span className="text-xs font-bold text-orange-700">{escalations.filter(e => e.status === "open").length} Open</span>
               </div>
+              <div className="flex items-center gap-2 px-4 py-2 bg-blue-50 rounded-xl border border-blue-100">
+                <span className="material-icons text-blue-500 text-sm">engineering</span>
+                <span className="text-xs font-bold text-blue-700">{escalations.filter(e => e.status === "inprogress").length} In Progress</span>
+              </div>
               <div className="flex items-center gap-2 px-4 py-2 bg-green-50 rounded-xl border border-green-100">
                 <span className="material-icons text-green-500 text-sm">check_circle</span>
-                <span className="text-xs font-bold text-green-700">{escalations.filter(e => e.status === "resolved").length} Resolved</span>
+                <span className="text-xs font-bold text-green-700">{escalations.filter(e => e.status === "closed").length} Closed</span>
               </div>
             </div>
           </div>
@@ -247,6 +252,7 @@ export default function EscalationsPage() {
                     className={`bg-white rounded-2xl border shadow-sm overflow-hidden transition-all hover:shadow-md ${
                       esc.hasNewReply ? "border-l-4 border-l-blue-500 border-t border-r border-b border-blue-100" :
                       esc.status === "open" ? "border-l-4 border-l-orange-400 border-t border-r border-b border-[#E2E8F0]" :
+                      esc.status === "inprogress" ? "border-l-4 border-l-blue-400 border-t border-r border-b border-blue-100" :
                       "border-l-4 border-l-green-400 border-t border-r border-b border-[#E2E8F0]"
                     }`}>
                     <div className="p-5 cursor-pointer hover:bg-gray-50/50 transition-colors" onClick={() => viewReplies(esc.id)}>
@@ -254,8 +260,15 @@ export default function EscalationsPage() {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-2 flex-wrap">
                             <span className={`px-2.5 py-1 text-[10px] font-bold rounded-lg uppercase tracking-wider ${
-                              esc.status === "open" ? "bg-orange-50 text-orange-600 border border-orange-100" : "bg-green-50 text-green-600 border border-green-100"
-                            }`}>{esc.status}</span>
+                              esc.status === "open" ? "bg-orange-50 text-orange-600 border border-orange-100" :
+                              esc.status === "inprogress" ? "bg-blue-50 text-blue-600 border border-blue-100" :
+                              "bg-green-50 text-green-600 border border-green-100"
+                            }`}>{esc.status === "inprogress" ? "In Progress" : esc.status === "closed" ? "Closed" : "Open"}</span>
+                            {esc.assignedRegion && esc.status === "inprogress" && (
+                              <span className="px-2 py-0.5 text-[9px] font-bold rounded-lg bg-indigo-50 text-indigo-600 border border-indigo-100 flex items-center gap-1">
+                                <span className="material-icons text-[10px]">location_on</span>{esc.assignedRegion}
+                              </span>
+                            )}
                             {esc.hasNewReply && (
                               <span className="px-2.5 py-1 bg-blue-50 text-blue-600 text-[10px] font-bold rounded-lg uppercase tracking-wider border border-blue-100 animate-pulse">
                                 New Reply
@@ -293,10 +306,17 @@ export default function EscalationsPage() {
                               </div>
                             </div>
                           ))}
-                          {esc.status === "resolved" && (
+                          {esc.status === "inprogress" && (
+                            <div className="text-center py-3">
+                              <span className="px-4 py-2 bg-blue-50 text-blue-700 text-[11px] font-bold rounded-lg border border-blue-100">
+                                🔧 Forwarded to {esc.assignedRegion || "regional"} technicians — In Progress
+                              </span>
+                            </div>
+                          )}
+                          {esc.status === "closed" && (
                             <div className="text-center py-3">
                               <span className="px-4 py-2 bg-green-50 text-green-700 text-[11px] font-bold rounded-lg border border-green-100">
-                                ✓ Resolved by Back Office
+                                ✓ Issue Resolved — Ticket Closed
                               </span>
                             </div>
                           )}

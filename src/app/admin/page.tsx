@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { db, auth } from "@/lib/firebase/firebase";
 import {
@@ -24,8 +24,9 @@ interface Update {
 
 interface Escalation {
   id: string; subject: string; message: string; workerId: string;
-  workerName: string; status: "open" | "resolved"; createdAt: any;
+  workerName: string; status: "open" | "inprogress" | "closed"; createdAt: any;
   hasNewReply?: boolean; lastMessage?: string;
+  assignedRegion?: string; assignedSupervisorId?: string; forwardedAt?: any;
 }
 interface Schedule {
   id: string; type: "teabreak" | "lunch"; timeRange: string; workerIds: string[]; createdAt?: any;
@@ -39,8 +40,9 @@ export default function AdminDashboard() {
   const [escalations, setEscalations] = useState<Escalation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false); // corresponds to manager
   const [isSupervisor, setIsSupervisor] = useState(false);
+  const [isEscalator, setIsEscalator] = useState(false);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [activeTab, setActiveTab] = useState<Tab>("updates");
   const [showComposer, setShowComposer] = useState(false);
@@ -54,32 +56,52 @@ export default function AdminDashboard() {
   const [allActivity, setAllActivity] = useState<any[]>([]);
   const [activitySearch, setActivitySearch] = useState("");
   const [scheduleSearch, setScheduleSearch] = useState<Record<string, string>>({});
+  const [forwardingEsc, setForwardingEsc] = useState<string | null>(null);
+  const [escStatusFilter, setEscStatusFilter] = useState<"all" | "open" | "inprogress" | "closed">("all");
+  const [escSearch, setEscSearch] = useState("");
   const router = useRouter();
   const ADMIN_EMAIL = "shabanimnango99@gmail.com";
 
+  const TANZANIA_REGIONS = [
+    "Dar es Salaam", "Dodoma", "Arusha", "Mwanza", "Tanga", "Morogoro",
+    "Kilimanjaro", "Mbeya", "Iringa", "Kagera", "Mara", "Tabora",
+    "Kigoma", "Shinyanga", "Rukwa", "Singida", "Lindi", "Mtwara",
+    "Ruvuma", "Pwani", "Geita", "Katavi", "Njombe", "Simiyu",
+    "Songwe", "Zanzibar Urban/West", "Zanzibar North", "Zanzibar South",
+    "Pemba North", "Pemba South"
+  ];
+
   useEffect(() => {
+    let unsubs: (() => void)[] = [];
+    const cleanupListeners = () => { unsubs.forEach(u => u()); unsubs = []; };
+
     const unsub = onAuthStateChanged(auth, async (user) => {
+      cleanupListeners();
       if (!user) { router.push("/admin/login"); return; }
       
-      const isRoot = user.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+      let isRoot = false;
       let isSup = false;
+      let isEsc = false;
       
-      if (!isRoot) {
-        const uDoc = await getDoc(doc(db, "users", user.uid));
-        if (uDoc.exists() && uDoc.data().role === "supervisor") {
-          isSup = true;
-        } else {
-          setError("Unauthorized: Root or Supervisor access required.");
-          setIsAdmin(false); setIsSupervisor(false); setLoading(false); router.push("/admin/login"); return;
-        }
+      const uDoc = await getDoc(doc(db, "users", user.uid));
+      if (uDoc.exists()) {
+        const r = uDoc.data().role;
+        if (r === "manager" || user.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase()) isRoot = true;
+        if (r === "supervisor") isSup = true;
+        if (r === "escalator") isEsc = true;
+      }
+      
+      if (!isRoot && !isSup && !isEsc) {
+        setError("Unauthorized: Manager, Supervisor, or Escalator access required.");
+        setIsAdmin(false); setIsSupervisor(false); setIsEscalator(false); setLoading(false); router.push("/admin/login"); return;
       }
       
       setIsAdmin(isRoot);
       setIsSupervisor(isSup);
+      setIsEscalator(isEsc);
       
-      if (isSup && !isRoot) {
-        setActiveTab("schedule"); // Force supervisors to only see schedule
-      }
+      if (isEsc && !isRoot) setActiveTab("escalations");
+      else if (isSup && !isRoot) setActiveTab("schedule");
 
       // We will load schedules from the updates collection below to bypass permission limits
 
@@ -114,7 +136,7 @@ export default function AdminDashboard() {
           });
         });
 
-        return () => { unsubUsers(); unsubUpdates(); unsubEsc(); unsubAct(); };
+        unsubs.push(unsubUsers, unsubUpdates, unsubEsc, unsubAct);
       } else {
         setLoading(false);
         // Load agents assigned to this supervisor so they can be assigned to schedules
@@ -127,12 +149,60 @@ export default function AdminDashboard() {
           setSchedules(allDocs.filter((d: any) => d.isSchedule) as Schedule[]);
         });
         
-        return () => { unsubUpdatesSup(); unsubUsers(); };
+        unsubs.push(unsubUsers, unsubUpdatesSup);
       }
     });
 
-    return () => unsub();
+    return () => {
+      cleanupListeners();
+      unsub();
+    };
   }, [router]);
+
+  // Parse end time from timeRange string like "10:00 AM - 10:30 AM"
+  const parseEndTime = useCallback((timeRange: string): Date | null => {
+    if (!timeRange) return null;
+    const parts = timeRange.split("-");
+    if (parts.length < 2) return null;
+    const endStr = parts[1].trim();
+    const now = new Date();
+    const match12 = endStr.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+    if (match12) {
+      let hours = parseInt(match12[1]);
+      const mins = parseInt(match12[2]);
+      const ampm = match12[3].toUpperCase();
+      if (ampm === "PM" && hours < 12) hours += 12;
+      if (ampm === "AM" && hours === 12) hours = 0;
+      return new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, mins, 0);
+    }
+    const match24 = endStr.match(/^(\d{1,2}):(\d{2})$/);
+    if (match24) {
+      return new Date(now.getFullYear(), now.getMonth(), now.getDate(), parseInt(match24[1]), parseInt(match24[2]), 0);
+    }
+    return null;
+  }, []);
+
+  const isScheduleExpired = useCallback((timeRange: string): boolean => {
+    const endTime = parseEndTime(timeRange);
+    if (!endTime) return false;
+    return new Date() >= endTime;
+  }, [parseEndTime]);
+
+  // Auto-clear expired schedules every 30 seconds
+  useEffect(() => {
+    const checkExpired = async () => {
+      for (const sched of schedules) {
+        if (isScheduleExpired(sched.timeRange) && sched.workerIds?.length > 0) {
+          try {
+            await updateDoc(doc(db, "updates", sched.id), { workerIds: [] });
+          } catch (e) { /* silent */ }
+        }
+      }
+    };
+    checkExpired();
+    const interval = setInterval(checkExpired, 30000);
+    return () => clearInterval(interval);
+  }, [schedules, isScheduleExpired]);
 
   const postUpdate = async () => {
     if (!newTitle.trim() || !newMessage.trim()) return;
@@ -180,7 +250,28 @@ export default function AdminDashboard() {
   };
 
   const resolveEscalation = async (escId: string) => {
-    await updateDoc(doc(db, "escalations", escId), { status: "resolved" });
+    await updateDoc(doc(db, "escalations", escId), { status: "closed" });
+  };
+
+  const forwardToRegion = async (escId: string, region: string) => {
+    try {
+      // Find supervisors in the selected region
+      const regionSupervisors = users.filter(u => u.role === "supervisor" && (u as any).region === region);
+      const assignedSupId = regionSupervisors.length > 0 ? regionSupervisors[0].id : null;
+      await updateDoc(doc(db, "escalations", escId), {
+        status: "inprogress",
+        assignedRegion: region,
+        assignedSupervisorId: assignedSupId,
+        forwardedAt: serverTimestamp(),
+      });
+      // Add a system message
+      await addDoc(collection(db, "escalations", escId, "messages"), {
+        message: `Ticket forwarded to ${region} region technicians for resolution.`,
+        senderId: "system", senderName: "System",
+        createdAt: serverTimestamp(), isAdmin: true, isSystem: true,
+      });
+      setForwardingEsc(null);
+    } catch (err: any) { alert("Failed to forward: " + err.message); }
   };
 
   const toggleVerification = async (userId: string, current: boolean) => {
@@ -226,11 +317,29 @@ export default function AdminDashboard() {
 
   const supervisors = users.filter(u => u.role === "supervisor");
 
-  const filteredActivity = allActivity.filter(act => 
-    (act.userName || "").toLowerCase().includes(activitySearch.toLowerCase()) ||
-    (act.type || "").toLowerCase().includes(activitySearch.toLowerCase()) ||
-    (act.description || "").toLowerCase().includes(activitySearch.toLowerCase())
-  );
+  const filteredEscalations = escalations.filter(e => {
+    const matchesStatus = escStatusFilter === "all" || e.status === escStatusFilter;
+    const searchLower = escSearch.toLowerCase();
+    const matchesSearch = escSearch === "" || 
+      (e.subject || "").toLowerCase().includes(searchLower) || 
+      (e.message || "").toLowerCase().includes(searchLower) || 
+      (e.workerName || "").toLowerCase().includes(searchLower);
+    return matchesStatus && matchesSearch;
+  });
+
+  const filteredActivity = allActivity.filter(act => {
+    const isMatch = (act.userName || "").toLowerCase().includes(activitySearch.toLowerCase()) ||
+      (act.type || "").toLowerCase().includes(activitySearch.toLowerCase()) ||
+      (act.description || "").toLowerCase().includes(activitySearch.toLowerCase());
+      
+    if (!isMatch) return false;
+    
+    // Only show last 7 days
+    if (!act.createdAt?.toDate) return true;
+    const oneWeekAgo = new Date();
+    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+    return act.createdAt.toDate() > oneWeekAgo;
+  });
 
   if (loading) return (
     <div className="flex min-h-screen items-center justify-center bg-[#0F172A]">
@@ -241,7 +350,7 @@ export default function AdminDashboard() {
     </div>
   );
 
-  if (error || (!isAdmin && !isSupervisor)) return (
+  if (error || (!isAdmin && !isSupervisor && !isEscalator)) return (
     <div className="flex min-h-screen items-center justify-center bg-[#0F172A] p-6">
       <div className="bg-white/5 backdrop-blur-xl border border-red-500/20 p-10 rounded-[2.5rem] max-w-sm w-full text-center space-y-6">
         <div className="w-20 h-20 bg-red-500/10 rounded-3xl flex items-center justify-center mx-auto">
@@ -259,13 +368,15 @@ export default function AdminDashboard() {
 
   const tabs: { key: Tab; label: string; icon: string; count?: number }[] = [
     { key: "updates", label: "Updates", icon: "campaign", count: updates.length },
-    { key: "escalations", label: "Escalations", icon: "support_agent", count: escalations.filter(e => e.status === "open").length },
+    { key: "escalations", label: "Escalations", icon: "support_agent", count: escalations.filter(e => e.status === "open" || e.status === "inprogress").length },
     { key: "users", label: "Users", icon: "people", count: users.length },
     { key: "schedule", label: "Schedule", icon: "event", count: schedules.length },
     { key: "activity", label: "Activity Log", icon: "history", count: allActivity.length },
   ];
 
-  const visibleTabs = (isSupervisor && !isAdmin) ? tabs.filter(t => t.key === "schedule") : tabs;
+  const visibleTabs = isAdmin ? tabs : 
+                      isSupervisor ? tabs.filter(t => t.key === "schedule" || t.key === "updates") : 
+                      isEscalator ? tabs.filter(t => t.key === "escalations" || t.key === "updates") : [];
 
   return (
     <div className="flex h-screen bg-[#F1F5F9] font-sans">
@@ -307,17 +418,26 @@ export default function AdminDashboard() {
               )}
             </button>
           ))}
+          {isAdmin && (
+            <button onClick={() => router.push("/library")}
+              className={`w-full flex items-center justify-between px-3 py-3 rounded-xl text-sm font-bold transition-all text-gray-500 hover:bg-gray-50 hover:text-gray-900`}>
+              <div className="flex items-center gap-3">
+                <span className={`material-icons text-[18px] text-gray-400`}>folder_open</span>
+                System Library
+              </div>
+            </button>
+          )}
         </nav>
 
         <div className="p-4 border-t border-[#E2E8F0] bg-gray-50/50">
           <div className="flex items-center gap-3 mb-4 px-2">
             <div className="w-8 h-8 rounded-full bg-[#0F172A] flex items-center justify-center text-white text-xs font-black shrink-0">
-              {isAdmin ? "AD" : "SU"}
+              {isAdmin ? "MG" : isSupervisor ? "SU" : "ES"}
             </div>
-            <div className="min-w-0">
-              <p className="text-[10px] font-black uppercase tracking-widest text-[#0F172A]">{isAdmin ? "Root Admin" : "Supervisor"}</p>
-              <p className="text-xs text-gray-500 truncate">{auth.currentUser?.email || ADMIN_EMAIL}</p>
-            </div>
+          <div className="min-w-0">
+            <p className="text-[10px] font-black uppercase tracking-widest text-[#0F172A]">{isAdmin ? "Manager" : isSupervisor ? "Supervisor" : "Escalator"}</p>
+            <p className="text-xs text-gray-500 truncate">{auth.currentUser?.email?.split('@')[0] || "User"}</p>
+          </div>
           </div>
           <button onClick={() => auth.signOut().then(() => router.push("/admin/login"))}
             className="w-full flex items-center justify-center gap-2 py-2.5 text-sm font-bold text-red-600 bg-red-50 hover:bg-red-100 rounded-xl transition-all">
@@ -412,28 +532,108 @@ export default function AdminDashboard() {
         {/* ESCALATIONS TAB */}
         {activeTab === "escalations" && (
           <div className="space-y-6">
-            <h2 className="text-2xl font-black text-[#1E293B]">Worker Escalations</h2>
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <h2 className="text-2xl font-black text-[#1E293B]">Worker Escalations</h2>
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="relative">
+                  <span className="material-icons absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">search</span>
+                  <input 
+                    type="text" 
+                    placeholder="Search tickets..." 
+                    value={escSearch}
+                    onChange={(e) => setEscSearch(e.target.value)}
+                    className="pl-9 pr-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 outline-none w-full md:w-64 transition-all shadow-sm"
+                  />
+                </div>
+                <div className="flex items-center gap-2 bg-white p-1.5 rounded-2xl border border-gray-100 shadow-sm">
+                  {(["all", "open", "inprogress", "closed"] as const).map(f => (
+                  <button key={f} onClick={() => setEscStatusFilter(f)}
+                    className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                      escStatusFilter === f
+                        ? f === "open" ? "bg-orange-500 text-white shadow-md" :
+                          f === "inprogress" ? "bg-blue-500 text-white shadow-md" :
+                          f === "closed" ? "bg-green-500 text-white shadow-md" :
+                          "bg-[#0F172A] text-white shadow-md"
+                        : "text-gray-400 hover:bg-gray-50"
+                    }`}>
+                    {f === "inprogress" ? "In Progress" : f === "all" ? `All (${escalations.length})` : f}
+                    {f !== "all" && ` (${escalations.filter(e => e.status === f).length})`}
+                  </button>
+                ))}
+                </div>
+              </div>
+            </div>
+
             <div className="space-y-3">
-              {escalations.length === 0 ? (
-                <div className="text-center py-16 text-gray-400 text-sm font-bold">No escalations yet.</div>
-              ) : escalations.map(esc => (
-                <div key={esc.id} className={`bg-white rounded-2xl border shadow-sm overflow-hidden ${esc.status === "open" ? "border-orange-200" : "border-gray-100"}`}>
-                  <div className="p-5 cursor-pointer" onClick={() => loadEscalationMessages(esc.id)}>
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className={`px-2 py-0.5 text-[8px] font-black rounded-md uppercase tracking-widest ${
-                            esc.status === "open" ? "bg-orange-100 text-orange-600" : "bg-green-100 text-green-600"}`}>
-                            {esc.status}
+              {filteredEscalations.length === 0 ? (
+                <div className="text-center py-16 text-gray-400 text-sm font-bold bg-white rounded-2xl border border-dashed border-gray-200">
+                  {escSearch ? "No tickets match your search." : escStatusFilter === "all" ? "No escalations yet." : `No ${escStatusFilter === "inprogress" ? "in-progress" : escStatusFilter} escalations.`}
+                </div>
+              ) : filteredEscalations.map(esc => (
+                <div key={esc.id} className={`bg-white rounded-2xl border shadow-sm overflow-hidden transition-all ${
+                  esc.status === "open" ? "border-l-4 border-l-orange-400 border-t border-r border-b border-orange-100" :
+                  esc.status === "inprogress" ? "border-l-4 border-l-blue-400 border-t border-r border-b border-blue-100" :
+                  "border-l-4 border-l-green-400 border-t border-r border-b border-gray-100"
+                }`}>
+                  <div className="p-5 cursor-pointer hover:bg-gray-50/50 transition-colors" onClick={() => loadEscalationMessages(esc.id)}>
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-2 flex-wrap">
+                          <span className={`px-2.5 py-1 text-[8px] font-black rounded-lg uppercase tracking-widest ${
+                            esc.status === "open" ? "bg-orange-50 text-orange-600 border border-orange-100" :
+                            esc.status === "inprogress" ? "bg-blue-50 text-blue-600 border border-blue-100" :
+                            "bg-green-50 text-green-600 border border-green-100"}`}>
+                            {esc.status === "inprogress" ? "In Progress" : esc.status === "closed" ? "Closed" : "Open"}
                           </span>
+                          {esc.assignedRegion && (
+                            <span className="px-2.5 py-1 text-[8px] font-bold rounded-lg bg-indigo-50 text-indigo-600 border border-indigo-100 flex items-center gap-1">
+                              <span className="material-icons text-[10px]">location_on</span>
+                              {esc.assignedRegion}
+                            </span>
+                          )}
                           <span className="text-[9px] font-bold text-gray-400">{esc.workerName}</span>
                         </div>
                         <h3 className="font-black text-gray-900 mb-1">{esc.subject}</h3>
                         <p className="text-sm text-gray-500 line-clamp-1">{esc.message}</p>
                       </div>
-                      <span className="material-icons text-gray-300">{replyingTo === esc.id ? "expand_less" : "expand_more"}</span>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {esc.status === "open" && (
+                          <button onClick={(e) => { e.stopPropagation(); setForwardingEsc(forwardingEsc === esc.id ? null : esc.id); }}
+                            className="px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-lg text-[10px] font-bold hover:bg-indigo-100 transition-all border border-indigo-100 flex items-center gap-1">
+                            <span className="material-icons text-xs">send</span> Forward
+                          </button>
+                        )}
+                        {esc.status === "inprogress" && (
+                          <button onClick={(e) => { e.stopPropagation(); resolveEscalation(esc.id); }}
+                            className="px-3 py-1.5 bg-green-50 text-green-600 rounded-lg text-[10px] font-bold hover:bg-green-100 transition-all border border-green-100 flex items-center gap-1">
+                            <span className="material-icons text-xs">check_circle</span> Close
+                          </button>
+                        )}
+                        <span className="material-icons text-gray-300">{replyingTo === esc.id ? "expand_less" : "expand_more"}</span>
+                      </div>
                     </div>
                   </div>
+
+                  {/* Region Forwarding Panel */}
+                  {forwardingEsc === esc.id && (
+                    <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }}
+                      className="border-t border-indigo-100 bg-indigo-50/30 p-5">
+                      <div className="flex items-center gap-2 mb-4">
+                        <span className="material-icons text-indigo-500">location_on</span>
+                        <h4 className="text-sm font-black text-indigo-900">Forward to Regional Technicians</h4>
+                      </div>
+                      <p className="text-xs text-indigo-600/70 mb-4">Select the region to send this ticket to the technicians/supervisors for resolution.</p>
+                      <div className="grid grid-cols-3 md:grid-cols-5 gap-2 max-h-48 overflow-y-auto custom-scrollbar">
+                        {TANZANIA_REGIONS.map(region => (
+                          <button key={region} onClick={() => forwardToRegion(esc.id, region)}
+                            className="px-3 py-2.5 bg-white text-gray-700 rounded-xl text-[11px] font-bold hover:bg-indigo-600 hover:text-white transition-all border border-indigo-100 hover:border-indigo-600 hover:shadow-lg hover:shadow-indigo-500/20 text-center">
+                            {region}
+                          </button>
+                        ))}
+                      </div>
+                      <button onClick={() => setForwardingEsc(null)} className="mt-3 text-xs text-gray-400 font-bold hover:text-gray-600">Cancel</button>
+                    </motion.div>
+                  )}
 
                   {replyingTo === esc.id && (
                     <motion.div initial={{ height: 0 }} animate={{ height: "auto" }} className="border-t border-gray-100">
@@ -448,14 +648,23 @@ export default function AdminDashboard() {
                         {(escalationMessages[esc.id] || []).map(msg => (
                           <div key={msg.id} className={`flex ${msg.isAdmin ? "justify-end" : "justify-start"}`}>
                             <div className={`rounded-2xl px-4 py-2.5 max-w-[80%] ${
+                              msg.isSystem ? "bg-indigo-50 border border-indigo-100 rounded-none" :
                               msg.isAdmin ? "bg-[#2563EB] text-white rounded-tr-none" : "bg-white border border-gray-100 rounded-tl-none"}`}>
-                              <p className={`text-[10px] font-black uppercase mb-1 ${msg.isAdmin ? "text-blue-200" : "text-orange-500"}`}>{msg.senderName}</p>
-                              <p className="text-sm">{msg.message}</p>
+                              <p className={`text-[10px] font-black uppercase mb-1 ${
+                                msg.isSystem ? "text-indigo-500" : msg.isAdmin ? "text-blue-200" : "text-orange-500"}`}>{msg.senderName}</p>
+                              <p className={`text-sm ${msg.isSystem ? "text-indigo-700 italic" : ""}`}>{msg.message}</p>
                             </div>
                           </div>
                         ))}
+                        {esc.status === "closed" && (
+                          <div className="text-center py-3">
+                            <span className="px-4 py-2 bg-green-50 text-green-700 text-[11px] font-bold rounded-lg border border-green-100">
+                              ✓ Ticket Closed — Issue Resolved
+                            </span>
+                          </div>
+                        )}
                       </div>
-                      {esc.status === "open" && (
+                      {esc.status !== "closed" && (
                         <div className="p-4 border-t border-gray-100 flex gap-2">
                           <input value={replyText} onChange={e => setReplyText(e.target.value)} placeholder="Reply to escalation..."
                             onKeyDown={e => e.key === "Enter" && sendReply(esc.id)}
@@ -464,10 +673,18 @@ export default function AdminDashboard() {
                             className="bg-[#2563EB] text-white px-4 py-2.5 rounded-xl text-xs font-black disabled:opacity-50">
                             <span className="material-icons text-sm">send</span>
                           </button>
-                          <button onClick={() => resolveEscalation(esc.id)}
-                            className="bg-green-500 text-white px-4 py-2.5 rounded-xl text-xs font-black">
-                            <span className="material-icons text-sm">check</span>
-                          </button>
+                          {esc.status === "open" && (
+                            <button onClick={() => { setForwardingEsc(esc.id); setReplyingTo(null); }}
+                              className="bg-indigo-500 text-white px-4 py-2.5 rounded-xl text-xs font-black flex items-center gap-1">
+                              <span className="material-icons text-sm">shortcut</span> Forward
+                            </button>
+                          )}
+                          {esc.status === "inprogress" && (
+                            <button onClick={() => resolveEscalation(esc.id)}
+                              className="bg-green-500 text-white px-4 py-2.5 rounded-xl text-xs font-black flex items-center gap-1">
+                              <span className="material-icons text-sm">check</span> Close
+                            </button>
+                          )}
                         </div>
                       )}
                     </motion.div>
@@ -599,13 +816,29 @@ export default function AdminDashboard() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {schedules.map(sched => (
-                <div key={sched.id} className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100 relative">
-                  {isAdmin && (
-                    <button onClick={() => deleteSchedule(sched.id)} className="absolute top-4 right-4 text-gray-300 hover:text-red-500">
-                      <span className="material-icons text-sm">delete</span>
-                    </button>
-                  )}
+              {schedules.map(sched => {
+                const expired = isScheduleExpired(sched.timeRange);
+                const endTime = parseEndTime(sched.timeRange);
+                const minsLeft = endTime ? Math.max(0, Math.floor((endTime.getTime() - Date.now()) / 60000)) : null;
+
+                return (
+                <div key={sched.id} className={`bg-white rounded-[2rem] p-6 shadow-sm border relative transition-all ${
+                  expired ? "border-gray-200 opacity-60" : "border-gray-100"
+                }`}>
+                  <div className="absolute top-4 right-4 flex items-center gap-2">
+                    {expired ? (
+                      <span className="px-2.5 py-1 bg-gray-100 text-gray-500 text-[9px] font-black rounded-lg uppercase tracking-widest">Expired</span>
+                    ) : minsLeft !== null && minsLeft <= 10 ? (
+                      <span className="px-2.5 py-1 bg-red-50 text-red-600 text-[9px] font-black rounded-lg uppercase tracking-widest animate-pulse">{minsLeft}m left</span>
+                    ) : (
+                      <span className="px-2.5 py-1 bg-green-50 text-green-600 text-[9px] font-black rounded-lg uppercase tracking-widest">Active</span>
+                    )}
+                    {isAdmin && (
+                      <button onClick={() => deleteSchedule(sched.id)} className="text-gray-300 hover:text-red-500">
+                        <span className="material-icons text-sm">delete</span>
+                      </button>
+                    )}
+                  </div>
                   <div className="flex items-center gap-3 mb-6">
                     <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${sched.type === 'teabreak' ? 'bg-orange-50 text-orange-500' : 'bg-green-50 text-green-500'}`}>
                       <span className="material-icons">{sched.type === 'teabreak' ? 'local_cafe' : 'restaurant'}</span>
@@ -634,7 +867,7 @@ export default function AdminDashboard() {
                     </ol>
                   </div>
 
-                  {(isSupervisor || isAdmin) && (
+                  {!expired && (isSupervisor || isAdmin) && (
                     <div className="mt-4 pt-4 border-t border-gray-100">
                       <div className="relative">
                         <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2">
@@ -686,7 +919,8 @@ export default function AdminDashboard() {
                     </div>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
             {schedules.length === 0 && (
               <div className="text-center py-16 text-gray-400 text-sm bg-white rounded-2xl border border-dashed border-gray-200">
@@ -704,7 +938,11 @@ export default function AdminDashboard() {
                 <h2 className="text-lg font-black text-[#0F172A]">System Activity Log</h2>
                 <span className="text-xs font-bold text-gray-400">Showing latest {allActivity.length} events</span>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-3">
+                <button onClick={() => router.push("/library")} className="flex items-center gap-2 px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-xl text-xs font-black uppercase tracking-widest transition-colors border border-indigo-100">
+                  <span className="material-icons text-sm">folder_open</span>
+                  Open Library
+                </button>
                 <div className="relative">
                   <span className="material-icons absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">search</span>
                   <input 

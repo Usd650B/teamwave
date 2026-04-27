@@ -69,6 +69,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     { href: "/friends", icon: "people", label: "Friends", badge: pendingRequests },
     { href: "/discover", icon: "person_search", label: "Directory" },
     { href: "/activity", icon: "history", label: "Activity" },
+    { href: "/library", icon: "folder_open", label: "Library" },
   ];
 
   // Add supervisor link if user is a supervisor
