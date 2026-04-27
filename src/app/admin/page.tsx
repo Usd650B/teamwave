@@ -53,6 +53,7 @@ export default function AdminDashboard() {
   const [escalationMessages, setEscalationMessages] = useState<Record<string, any[]>>({});
   const [allActivity, setAllActivity] = useState<any[]>([]);
   const [activitySearch, setActivitySearch] = useState("");
+  const [scheduleSearch, setScheduleSearch] = useState<Record<string, string>>({});
   const router = useRouter();
   const ADMIN_EMAIL = "shabanimnango99@gmail.com";
 
@@ -635,20 +636,53 @@ export default function AdminDashboard() {
 
                   {(isSupervisor || isAdmin) && (
                     <div className="mt-4 pt-4 border-t border-gray-100">
-                      <select 
-                        className="w-full text-sm bg-gray-50 border border-gray-200 rounded-xl p-2 outline-none font-bold text-gray-700"
-                        onChange={(e) => {
-                          if (e.target.value) {
-                            toggleWorkerSchedule(sched.id, e.target.value, false);
-                            e.target.value = "";
-                          }
-                        }}
-                      >
-                        <option value="">+ Add Your Worker...</option>
-                        {users.filter(u => !sched.workerIds?.includes(u.id)).map(u => (
-                          <option key={u.id} value={u.id}>{u.name}</option>
-                        ))}
-                      </select>
+                      <div className="relative">
+                        <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2">
+                          <span className="material-icons text-gray-400 text-sm">search</span>
+                          <input
+                            type="text"
+                            placeholder="Search worker by name..."
+                            className="bg-transparent w-full text-sm font-bold text-gray-700 outline-none placeholder:text-gray-400"
+                            value={scheduleSearch[sched.id] || ""}
+                            onChange={(e) => setScheduleSearch(prev => ({ ...prev, [sched.id]: e.target.value }))}
+                          />
+                          {(scheduleSearch[sched.id] || "").length > 0 && (
+                            <button onClick={() => setScheduleSearch(prev => ({ ...prev, [sched.id]: "" }))} className="text-gray-400 hover:text-gray-600">
+                              <span className="material-icons text-sm">close</span>
+                            </button>
+                          )}
+                        </div>
+                        {(scheduleSearch[sched.id] || "").trim().length > 0 && (
+                          <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-xl z-30 max-h-48 overflow-y-auto custom-scrollbar">
+                            {users
+                              .filter(u => !sched.workerIds?.includes(u.id))
+                              .filter(u => u.name?.toLowerCase().includes((scheduleSearch[sched.id] || "").toLowerCase()))
+                              .length === 0 ? (
+                                <div className="px-4 py-3 text-xs text-gray-400 italic">No workers found</div>
+                              ) : (
+                                users
+                                  .filter(u => !sched.workerIds?.includes(u.id))
+                                  .filter(u => u.name?.toLowerCase().includes((scheduleSearch[sched.id] || "").toLowerCase()))
+                                  .map(u => (
+                                    <button key={u.id} onClick={() => {
+                                      toggleWorkerSchedule(sched.id, u.id, false);
+                                      setScheduleSearch(prev => ({ ...prev, [sched.id]: "" }));
+                                    }}
+                                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-blue-50 transition-colors text-left border-b border-gray-50 last:border-0">
+                                      <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-xs font-black text-gray-500 shrink-0">
+                                        {u.name?.charAt(0)?.toUpperCase() || "?"}
+                                      </div>
+                                      <div className="min-w-0">
+                                        <p className="text-sm font-bold text-[#0F172A] truncate">{u.name}</p>
+                                        <p className="text-[10px] text-gray-400 truncate">{u.email || u.role || "Worker"}</p>
+                                      </div>
+                                      <span className="material-icons text-blue-500 text-sm ml-auto shrink-0">add_circle</span>
+                                    </button>
+                                  ))
+                              )}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
